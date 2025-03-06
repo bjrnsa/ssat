@@ -1,0 +1,106 @@
+# ignore *everything*
+*
+!/**/
+# and then this 'unignores' anything with an extension
+!*.*
+# Package manager files
+# Uncomment if you want to track these
+#Pipfile.lock
+#poetry.lock
+#uv.lock
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.env
+.venv
+env/
+venv/
+ENV/
+.python-version
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+MANIFEST
+
+# Testing and coverage
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+cover/
+htmlcov/
+
+# Stan-specific
+# Hack to ignore cmdstanpy generated models
+
+
+# Data and notebooks
+*.pkl
+*.csv
+*.xlsx
+*.xls
+*.h5
+*.hdf5
+.ipynb_checkpoints/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.spyderproject
+.spyproject
+.ropeproject
+.project
+.settings/
+
+# Documentation
+docs/_build/
+docsrc/_build/
+*.mo
+*.pot
+# Misc
+.DS_Store
+*.log
+.scrapy
+celerybeat-schedule
+celerybeat.pid
+*.sage.py
+.pdm.toml
+.pdm-python
+.pdm-build/
+__pypackages__/
+# now, the rest of your gitignore should appear after the above
+# on windows Stan executables end in .exe
+*.exe
+# Ignore temporary files created as part of compilation.
+*.hpp
+*.o
