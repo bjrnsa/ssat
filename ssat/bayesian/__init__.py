@@ -1,11 +1,20 @@
-"""This module contains the implementation of various bayesian models for sports betting."""
+"""This module contains Bayesian models for sports prediction and betting.
 
-from .nbinom_hierachical import NegBinomHierarchical
-from .poisson_hierarchical import PoissonHierarchical
-from .skellam_hierachichal import SkellamHierarchical
+Available models:
+- Poisson: Basic Poisson model for goal scoring
+- NegBinom: Negative Binomial model for overdispersed scoring
+- Skellam: Direct modeling of goal differences
+- SkellamZero: Zero-inflated Skellam for matches with frequent draws
+"""
+
+from .nbinom import NegBinom
+from .poisson import Poisson
+from .skellam import Skellam
+from .skellam_zero import SkellamZero
 
 __all__ = [
-    "PoissonHierarchical",
-    "NegBinomHierarchical",
-    "SkellamHierarchical",
+    "Poisson",
+    "NegBinom",
+    "Skellam",
+    "SkellamZero",
 ]

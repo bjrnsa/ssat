@@ -773,18 +773,6 @@ class BaseModel(ABC):
         print("  data = np.array(your_data)  # columns must be in order shown above")
         print("  model.fit(data)")
 
-        print("\nRaw Stan data requirements:")
-        print("-" * 30)
-        for var in self._data_vars:
-            type_str = var["type"]
-            if var["array_dims"]:
-                type_str = f"array[{var['array_dims']}] {type_str}"
-            if var["constraints"]:
-                type_str = f"{type_str} {var['constraints']}"
-            desc = f" // {var['description']}" if var["description"] else ""
-            print(f"{type_str} {var['name']};{desc}")
-        print("-" * 50)
-
     def _data_dict(
         self,
         data: Union[np.ndarray, pd.DataFrame],
