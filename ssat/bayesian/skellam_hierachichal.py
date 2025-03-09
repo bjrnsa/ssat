@@ -7,7 +7,6 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from ssat.bayesian.base_model import BaseModel, FitError
-from ssat.bayesian.hierarchical_base import HierarchicalBaseModel
 
 
 class SkellamHierarchical(BaseModel):
@@ -29,10 +28,17 @@ class SkellamHierarchical(BaseModel):
 
 
 if __name__ == "__main__":
-    df = pd.read_csv("ssat/data/afl_data.csv")
-    df = df[["Home Team", "Away Team", "Home Pts", "Away Pts"]]
+    df = pd.read_pickle("ssat/data/handball_data.pkl")
+    df = df[["home_team", "away_team", "home_goals", "away_goals"]]
     model = SkellamHierarchical()
     model.fit(df)
-    pred = model.predict(df)
-    proba = model.predict_proba(df)
-    pass
+    matches = pd.DataFrame(
+        {
+            "home_team": ["Sonderjyske", "Aalborg", "Ringsted"],
+            "away_team": ["GOG", "Holstebro", "Fredericia"],
+        }
+    )
+    pred = model.predict(matches)
+    proba = model.predict_proba(matches)
+    model.plot_trace()
+    model.plot_team_stats()

@@ -28,6 +28,7 @@ from typing import (
 
 import arviz as az
 import cmdstanpy
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
@@ -60,8 +61,8 @@ class ModelData(Protocol):
 class MCMCConfig:
     """Configuration for MCMC sampling."""
 
-    draws: int = 2000
-    warmup: int = 1000
+    draws: int = 8000
+    warmup: int = 2000
     chains: int = 4
     seed: int = 1
 
@@ -146,69 +147,9 @@ class BaseModel(ABC):
 
         self._mcmc_config = mcmc_config or MCMCConfig()
 
-        # Setup caching
-        self._cache_dir = Path("./.model_cache")
-        self._cache_dir.mkdir(exist_ok=True)
-
         # Parse Stan file and print data requirements
         self._parse_stan_file()
         self._print_data_requirements()
-
-    def _get_model_hash(
-        self, data: Dict[str, Any], draws: int, warmup: int, chains: int
-    ) -> str:
-        """Generate a unique hash for the model configuration and data.
-
-        Parameters
-        ----------
-        data : Dict[str, Any]
-            Data for Stan model
-        draws : int
-            Number of posterior samples per chain
-        warmup : int
-            Number of warmup iterations
-        chains : int
-            Number of MCMC chains
-
-        Returns:
-        -------
-        str
-            Hash string representing the model configuration
-        """
-        # Create a string representation of the model configuration
-        # Use data keys and shapes instead of full data for efficiency
-        data_repr = str(
-            {
-                k: (np.array(v).shape if isinstance(v, (list, np.ndarray)) else v)
-                for k, v in data.items()
-            }
-        )
-
-        config_str = (
-            f"stan_file={self.STAN_FILE},"
-            f"data={data_repr},"
-            f"draws={draws},"
-            f"warmup={warmup},"
-            f"chains={chains},"
-        )
-
-        # Generate a hash
-        return hashlib.md5(config_str.encode()).hexdigest()
-
-    def _get_cache_path(self, model_hash: str) -> Path:
-        """Get the path to the cached model results.
-
-        Parameters
-        ----------
-        model_hash : str
-            Hash string representing the model configuration
-
-        Returns:
-        -------
-        Path
-            Path to the cached model file
-        """
-        return self.cache_dir / f"model_results_{model_hash}.pkl"
 
     def _compile_and_fit_stan_model(
         self,
@@ -353,7 +294,6 @@ class BaseModel(ABC):
         if not self.is_fitted_:
             raise ValueError("Model must be fit before making predictions")
 
-        # Prepare data dictionary for prediction
         data_dict = self._data_dict(data, fit=False)
 
         if self.model is None or self.fit_result is None:
@@ -364,28 +304,19 @@ class BaseModel(ABC):
             preds = self.model.generate_quantities(
                 data=data_dict, previous_fit=self.fit_result
             )
+            predictions = np.array(
+                [preds.stan_variable(pred_var) for pred_var in self.pred_vars]
+            )
 
-            # Find prediction variables in Stan output
-            pred_vars = [var for var in preds.keys() if var.startswith("pred_")]
-            if not pred_vars:
-                raise ValueError("No prediction variables found in Stan output")
+            if return_matches:
+                return predictions
 
-            # Get main prediction variable (usually ends with _match)
-            match_vars = [var for var in pred_vars if var.endswith("_match")]
-            if not match_vars:
-                # If no _match variables, use first prediction variable
-                pred_var = pred_vars[0]
             else:
-                pred_var = match_vars[0]
-
-            # Extract predictions
-            predictions = preds.stan_variable(pred_var)
-
-            # Average over samples if not returning matches
-            if not return_matches:
-                predictions = predictions.mean(axis=0)
-
-            return predictions
+                return self._format_predictions(
+                    data,
+                    np.median(predictions, axis=1).T,
+                    col_names=self.pred_vars,
+                )
 
         except Exception as e:
             raise FitError(f"Failed to generate predictions: {str(e)}") from e
@@ -394,9 +325,7 @@ class BaseModel(ABC):
         self,
         data: Union[np.ndarray, pd.DataFrame],
         point_spread: float = 0.0,
-        include_draw: bool = True,
         outcome: Optional[str] = None,
-        threshold: float = 0.0,
     ) -> np.ndarray:
         """Generate probability predictions for new data.
 
@@ -407,12 +336,8 @@ class BaseModel(ABC):
             If DataFrame, column names don't matter but order of columns must match requirements.
         point_spread : float, optional
             Point spread adjustment (positive favors home team), by default 0.0
-        include_draw : bool, optional
-            Whether to include draw probability, by default True
         outcome : Optional[str], optional
             Specific outcome to predict ('home', 'away', or 'draw'), by default None
-        threshold : float, optional
-            Threshold for predicting draw outcome, by default 0.0
 
         Returns:
         -------
@@ -422,63 +347,55 @@ class BaseModel(ABC):
         Raises:
         ------
         ValueError
-            If model is not fitted or if threshold is negative or if outcome is invalid
+            If model is not fitted or if outcome is invalid
         """
         if not self.is_fitted_:
             raise ValueError("Model must be fit before making predictions")
 
-        if threshold < 0:
-            raise ValueError("threshold must be non-negative")
-
         if outcome not in [None, "home", "away", "draw"]:
             raise ValueError("outcome must be None, 'home', 'away', or 'draw'")
 
-        # Get raw predictions first
+        # Get raw predictions and calculate goal differences
         predictions = self.predict(data, return_matches=True)
 
-        # Apply point spread
-        if point_spread != 0:
-            predictions = predictions + point_spread
-
-        # Initialize arrays for storing probabilities
-        n_samples = predictions.shape[0]
-        n_matches = predictions.shape[1]
-        n_classes = 3 if include_draw else 2
-
-        # Calculate probabilities for each posterior sample
-        sample_probs = np.zeros(
-            (n_samples, n_matches, n_classes if outcome is None else 1)
-        )
-
-        # Calculate outcome masks with threshold
-        draw_mask = (predictions >= -threshold) & (predictions <= threshold)
-        home_win_mask = predictions > threshold
-        away_win_mask = predictions < -threshold
-
-        # Handle numerical stability for probability calculation
-        eps = np.finfo(float).eps
-        total_outcomes = (
-            draw_mask.astype(float)
-            + home_win_mask.astype(float)
-            + away_win_mask.astype(float)
-        )
-        total_outcomes = np.maximum(total_outcomes, eps)  # Avoid division by zero
-
-        if outcome is None:
-            sample_probs[..., 0] = home_win_mask.astype(float) / total_outcomes
-            if include_draw:
-                sample_probs[..., 1] = draw_mask.astype(float) / total_outcomes
-            sample_probs[..., -1] = away_win_mask.astype(float) / total_outcomes
+        # If predictions dimension n x 1, assume predictions are already goal differences
+        if predictions.shape[0] == 1:
+            goal_differences = predictions[0] + point_spread
+        elif predictions.shape[0] == 2:
+            goal_differences = predictions[0] - predictions[1] + point_spread
         else:
-            if outcome == "home":
-                sample_probs = home_win_mask.astype(float) / total_outcomes
-            elif outcome == "away":
-                sample_probs = away_win_mask.astype(float) / total_outcomes
-            elif outcome == "draw":
-                sample_probs = draw_mask.astype(float) / total_outcomes
+            raise ValueError("Invalid predictions shape")
 
-        # Average over samples
-        return sample_probs.mean(axis=0)
+        # Calculate home win probabilities directly
+        home_probs = (goal_differences > 0).mean(axis=0)
+        draw_probs = (goal_differences == 0).mean(axis=0)
+        away_probs = (goal_differences < 0).mean(axis=0)
+
+        # Handle specific outcome requests
+        if outcome == "home":
+            return self._format_predictions(data, home_probs)
+        elif outcome == "away":
+            return self._format_predictions(data, away_probs)
+        elif outcome == "draw":
+            return self._format_predictions(data, draw_probs)
+
+        # Return both probabilities
+        return self._format_predictions(
+            data,
+            np.stack([home_probs, draw_probs, away_probs]).T,
+            col_names=["home", "draw", "away"],
+        )
+
+    def _format_predictions(
+        self,
+        data: Union[np.ndarray, pd.DataFrame],
+        predictions: np.ndarray,
+        col_names: list[str],
+    ) -> np.ndarray:
+        if isinstance(data, pd.DataFrame):
+            return pd.DataFrame(predictions, index=self._match_ids, columns=col_names)
+        else:
+            return predictions
 
     # @abstractmethod
     def get_team_ratings(self) -> pd.DataFrame:
@@ -516,40 +433,98 @@ class BaseModel(ABC):
         if self.model is None or self.fit_result is None:
             raise ValueError("Model not properly initialized")
 
-        # Get all variables from Stan output
-        param_names = self.fit_result.param_names
-        if not param_names:
-            raise ValueError("No parameters found in Stan output")
+        # Get model structure information
+        model_info = self.src_info
 
-        # Group variables by their role
+        # Extract variables by naming conventions
+        self.pred_vars = [
+            var
+            for var in model_info.get("generated quantities", {}).keys()
+            if var.startswith("pred_")
+        ]
+
+        log_likelihood = [
+            var
+            for var in model_info.get("generated quantities", {}).keys()
+            if var.startswith("ll_")
+        ]
+
+        # Extract observed data (variables ending with _obs)
         observed_data = {}
-        coords = {}
+        for var_name in data.keys():
+            if var_name.endswith("_obs_match"):
+                # Strip _obs_match suffix to get the base name
+                base_name = var_name.replace("_obs_match", "")
+                observed_data[base_name] = data[var_name]
+
+        # All other data goes into constant_data
+        constant_data = {k: v for k, v in data.items() if k not in observed_data}
+
+        # Set up coordinates
+        coords = {
+            "match": self._match_ids,
+            "team": self._entities,
+        }
+
+        # Automatically generate dimensions mapping
         dims = {}
 
-        # Add data variables
-        data_vars = {}
-        for var in self._data_vars:
-            name = var["name"]
-            if name in data and name not in ["N", "T"]:  # Skip dimensions
-                data_vars[name] = data[name]
-
-        # Add coordinates for team indices if present
-        if hasattr(self, "_entities"):
-            coords["team"] = list(self._entities)
-            for var in self._data_vars:
-                if var["name"].endswith("_idx_match"):
-                    base_name = var["name"].replace("_idx_match", "")
-                    dims[base_name] = ["match"]
-                    data_vars[base_name] = self._entities[data[var["name"]] - 1]
+        # Process all variables in the model
+        for section in [
+            "parameters",
+            "transformed parameters",
+            "generated quantities",
+            "inputs",
+        ]:
+            for var_name, var_info in model_info.get(section, {}).items():
+                if var_info["dimensions"] > 0:
+                    # Assign dimensions based on suffix
+                    if var_name.endswith("_team"):
+                        dims[var_name] = ["team"]
+                    elif var_name.endswith("_match"):
+                        dims[var_name] = ["match"]
+                    elif var_name.endswith("_idx_match"):
+                        dims[var_name] = ["match"]
 
         # Create inference data
         self.inference_data = az.from_cmdstanpy(
             posterior=self.fit_result,
-            posterior_predictive="pred_",
-            observed_data=data_vars,
+            observed_data=observed_data,
+            constant_data=constant_data,
             coords=coords,
             dims=dims,
+            posterior_predictive=self.pred_vars,
+            log_likelihood=log_likelihood,
         )
+
+    def plot_trace(self) -> None:
+        """Plot trace of the model.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Keyword arguments passed to arviz.plot_trace
+        """
+        az.plot_trace(
+            self.inference_data,
+            var_names=["attack_team", "defence_team", "home_advantage"],
+            compact=True,
+            combined=True,
+        )
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_team_stats(self) -> None:
+        """Plot team strength statistics."""
+        ax = az.plot_forest(
+            self.inference_data.posterior.attack_team
+            - self.inference_data.posterior.defence_team,
+            labeller=TeamLabeller(),
+        )
+        ax[0].set_title("Overall Team Strength")
+        plt.tight_layout()
+        plt.show()
 
     def _validate_teams(self, teams: List[str]) -> None:
         """Validate team existence in the model.
@@ -838,8 +813,10 @@ class BaseModel(ABC):
         # Convert data to numpy array if DataFrame
         if isinstance(data, pd.DataFrame):
             data_array = data.to_numpy()
+            self._match_ids = data.index.to_numpy()
         else:
             data_array = np.asarray(data)
+            self._match_ids = np.arange(len(data_array))
 
         # Initialize data dictionary with dimensions
         data_dict = {
@@ -883,31 +860,26 @@ class BaseModel(ABC):
             team_map = {entity: idx + 1 for idx, entity in enumerate(teams)}
 
             # Store dimensions and mapping for future use
-            data_dict["T"] = n_teams
             if fit:
                 self._team_map = team_map
                 self._n_teams = n_teams
                 self._entities = teams
+                data_dict["T"] = n_teams
+            else:
+                data_dict["T"] = self._n_teams
 
-            # Create index arrays
-            for var in index_vars:
-                if not fit:
-                    # Validate entities exist in mapping
-                    unknown = set(data_array[:, col_idx - len(index_vars)]) - set(
-                        self._team_map.keys()
-                    )
-                    if unknown:
-                        raise ValueError(
-                            f"Unknown entities in column {col_idx - len(index_vars)}: {unknown}"
-                        )
-                    team_map = self._team_map
+        # Create index arrays
+        for i, var in enumerate(index_vars):
+            if not fit:
+                # Validate entities exist in mapping
+                unknown = set(data_array[:, i]) - set(self._team_map.keys())
+                if unknown:
+                    raise ValueError(f"Unknown entities in column {i}: {unknown}")
+                team_map = self._team_map
 
-                data_dict[var["name"]] = np.array(
-                    [
-                        team_map[entity]
-                        for entity in data_array[:, col_idx - len(index_vars)]
-                    ]
-                )
+            data_dict[var["name"]] = np.array(
+                [team_map[entity] for entity in data_array[:, i]]
+            )
 
         # Handle data columns
         for var in data_vars:
@@ -946,3 +918,9 @@ class BaseModel(ABC):
                 data_dict[var["name"]] = np.ones(len(data_array), dtype=np.float64)
 
         return data_dict
+
+
+class TeamLabeller(az.labels.BaseLabeller):
+    def make_label_flat(self, var_name, sel, isel):
+        sel_str = self.sel_to_str(sel, isel)
+        return sel_str

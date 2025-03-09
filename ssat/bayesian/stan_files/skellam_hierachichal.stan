@@ -18,8 +18,10 @@ functions {
       return normal_lpdf(k | mean_diff, sqrt(var_sum));
     } else {
       // Standard calculation for moderate values
-      real log_term = -(lambda1 + lambda2) + (k/2.0) * log(lambda1 / lambda2);
-      log_term += log(modified_bessel_first_kind(k, 2 * sqrt(lambda1 * lambda2)));
+      real log_term = -(lambda1 + lambda2)
+                      + (k / 2.0) * log(lambda1 / lambda2);
+      log_term += log(modified_bessel_first_kind(k,
+                                                 2 * sqrt(lambda1 * lambda2)));
       return log_term;
     }
   }
@@ -57,7 +59,6 @@ functions {
     return all_ones;
   }
 }
-
 data {
   int N; // Number of matches
   int T; // Number of teams
@@ -67,15 +68,13 @@ data {
   array[N] int away_goals_obs_match; // Away team goals
   vector[N] weights_match;
 }
-
 transformed data {
   array[N] int goal_diff_match;
 
-  for (i in 1:N) {
+  for (i in 1 : N) {
     goal_diff_match[i] = home_goals_obs_match[i] - away_goals_obs_match[i];
   }
 }
-
 parameters {
   real home_advantage;
   real intercept;
@@ -84,7 +83,6 @@ parameters {
   vector[T] attack_raw_team;
   vector[T] defence_raw_team;
 }
-
 transformed parameters {
   vector[T] attack_team;
   vector[T] defence_team;
@@ -99,15 +97,14 @@ transformed parameters {
   defence_team = defence_raw_team - mean(defence_raw_team);
 
   log_lambda_home_match = intercept + home_advantage
-                        + attack_team[home_team_idx_match]
-                        + defence_team[away_team_idx_match];
+                          + attack_team[home_team_idx_match]
+                          + defence_team[away_team_idx_match];
   log_lambda_away_match = intercept + attack_team[away_team_idx_match]
-                        + defence_team[home_team_idx_match];
+                          + defence_team[home_team_idx_match];
 
   lambda_home_match = exp(log_lambda_home_match);
   lambda_away_match = exp(log_lambda_away_match);
 }
-
 model {
   home_advantage ~ normal(0, 1);
   intercept ~ normal(0, 1);
@@ -120,31 +117,27 @@ model {
 
   // Pure Skellam model for goal differences
   if (all_ones(N, weights_match) == 1) {
-    for (i in 1:N) {
-      goal_diff_match[i] ~ skellam(lambda_home_match[i], lambda_away_match[i]);
+    for (i in 1 : N) {
+      goal_diff_match[i] ~ skellam(lambda_home_match[i],
+                                   lambda_away_match[i]);
     }
   } else {
-    for (i in 1:N) {
-      target += weights_match[i] * skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i]);
+    for (i in 1 : N) {
+      target += weights_match[i]
+                * skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i]);
     }
   }
 }
-
 generated quantities {
   vector[N] ll_skellam_match;
   vector[N] pred_goal_diff_match;
-  vector[N] pred_home_goals_match;
-  vector[N] pred_away_goals_match;
 
-  for (i in 1:N) {
+  for (i in 1 : N) {
     // Log likelihood for goal differences
     ll_skellam_match[i] = skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i]);
 
     // Generate predictions
-    pred_goal_diff_match[i] = skellam_rng(lambda_home_match[i], lambda_away_match[i]);
-
-    // Also predict individual goals for interpretability
-    pred_home_goals_match[i] = poisson_rng(lambda_home_match[i]);
-    pred_away_goals_match[i] = poisson_rng(lambda_away_match[i]);
+    pred_goal_diff_match[i] = skellam_rng(lambda_home_match[i],
+                                          lambda_away_match[i]);
   }
 }

@@ -1,6 +1,6 @@
 """Bayesian Negative Binomial Hierarchical Model."""
 
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -9,20 +9,20 @@ from numpy.typing import NDArray
 from ssat.bayesian.base_model import BaseModel, FitError
 
 
-class NegBinomHierarchical(BaseModel):
-    """Bayesian Negative Binomial Hierarchical Model."""
+class SkellamZero(BaseModel):
+    """Bayesian Zero-inflated Skellam Hierarchical Model."""
 
     def __init__(
         self,
-        stem: str = "nbinom_hierachical",
+        stem: str = "skellam_zero",
     ):
-        """Initialize the Negative Binomial Hierarchical model.
+        """Initialize the Zero-inflated Skellam Hierarchical model.
 
         Parameters
         ----------
         stem : str, optional
             Stem name for the Stan model file.
-            Defaults to "nbinom_hierachical".
+            Defaults to "skellam_zero".
         """
         super().__init__(stan_file=stem)
 
@@ -30,9 +30,15 @@ class NegBinomHierarchical(BaseModel):
 if __name__ == "__main__":
     df = pd.read_pickle("ssat/data/handball_data.pkl")
     df = df[["home_team", "away_team", "home_goals", "away_goals"]]
-    model = NegBinomHierarchical()
+    model = SkellamZero()
     model.fit(df)
-    pred = model.predict(df)
-    proba = model.predict_proba(df)
+    matches = pd.DataFrame(
+        {
+            "home_team": ["Sonderjyske", "Aalborg", "Ringsted"],
+            "away_team": ["GOG", "Holstebro", "Fredericia"],
+        }
+    )
+    pred = model.predict(matches)
+    proba = model.predict_proba(matches)
     model.plot_trace()
     model.plot_team_stats()

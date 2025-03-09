@@ -18,11 +18,18 @@ functions {
       return normal_lpdf(k | mean_diff, sqrt(var_sum));
     } else {
       // Standard calculation for moderate values
-      real log_term = -(lambda1 + lambda2)
-                      + (k / 2.0) * log(lambda1 / lambda2);
-      log_term += log(modified_bessel_first_kind(k,
-                                                 2 * sqrt(lambda1 * lambda2)));
+      real log_term = -(lambda1 + lambda2) + (k/2.0) * log(lambda1 / lambda2);
+      log_term += log(modified_bessel_first_kind(k, 2 * sqrt(lambda1 * lambda2)));
       return log_term;
+    }
+  }
+
+  // Zero-inflated Skellam implementation
+  real zero_inflated_skellam_lpmf(int k, real mu1, real mu2, real gamma) {
+    if (k == 0) {
+      return log_sum_exp(log(gamma), log1m(gamma) + skellam_lpmf(0 | mu1, mu2));
+    } else {
+      return log1m(gamma) + skellam_lpmf(k | mu1, mu2);
     }
   }
 
@@ -48,6 +55,15 @@ functions {
     }
   }
 
+  // Zero-inflated Skellam random number generator
+  int zero_inflated_skellam_rng(real mu1, real mu2, real gamma) {
+    if (bernoulli_rng(gamma)) {
+      return 0;
+    } else {
+      return skellam_rng(mu1, mu2);
+    }
+  }
+
   int all_ones(int N, vector weights_match) {
     int all_ones = 1;
     for (n in 1 : N) {
@@ -59,6 +75,7 @@ functions {
     return all_ones;
   }
 }
+
 data {
   int N; // Number of matches
   int T; // Number of teams
@@ -67,16 +84,16 @@ data {
   array[N] int home_goals_obs_match; // Home team goals
   array[N] int away_goals_obs_match; // Away team goals
   vector[N] weights_match;
-  vector[N] implied_home_win; // Implied probability of home win
-  vector[N] implied_away_win; // Implied probability of away win
 }
+
 transformed data {
   array[N] int goal_diff_match;
 
-  for (i in 1 : N) {
+  for (i in 1:N) {
     goal_diff_match[i] = home_goals_obs_match[i] - away_goals_obs_match[i];
   }
 }
+
 parameters {
   real home_advantage;
   real intercept;
@@ -84,10 +101,9 @@ parameters {
   real<lower=0.001, upper=100> tau_defence;
   vector[T] attack_raw_team;
   vector[T] defence_raw_team;
-  real beta_implied_home_win; // Implied probability of home win
-
-  real beta_implied_away_win; // Implied probability of away win
+  real<lower=0, upper=1> gamma; // Zero-inflation parameter
 }
+
 transformed parameters {
   vector[T] attack_team;
   vector[T] defence_team;
@@ -102,19 +118,19 @@ transformed parameters {
   defence_team = defence_raw_team - mean(defence_raw_team);
 
   log_lambda_home_match = intercept + home_advantage
-                          + attack_team[home_team_idx_match]
-                          + defence_team[away_team_idx_match]
-                          + beta_implied_home_win * implied_home_win;
+                        + attack_team[home_team_idx_match]
+                        + defence_team[away_team_idx_match];
   log_lambda_away_match = intercept + attack_team[away_team_idx_match]
-                          + defence_team[home_team_idx_match]
-                          + beta_implied_away_win * implied_away_win;
+                        + defence_team[home_team_idx_match];
 
   lambda_home_match = exp(log_lambda_home_match);
   lambda_away_match = exp(log_lambda_away_match);
 }
+
 model {
   home_advantage ~ normal(0, 1);
   intercept ~ normal(0, 1);
+  gamma ~ beta(1, 9); // Prior for zero-inflation parameter, slightly favoring lower values
 
   tau_attack ~ gamma(0.1, 0.1);
   tau_defence ~ gamma(0.1, 0.1);
@@ -122,35 +138,32 @@ model {
   attack_raw_team ~ normal(0, sigma_attack);
   defence_raw_team ~ normal(0, sigma_defence);
 
-  // Pure Skellam model for goal differences
+  // Zero-inflated Skellam model for goal differences
   if (all_ones(N, weights_match) == 1) {
-    for (i in 1 : N) {
-      goal_diff_match[i] ~ skellam(lambda_home_match[i],
-                                   lambda_away_match[i]);
+    for (i in 1:N) {
+      goal_diff_match[i] ~ zero_inflated_skellam(lambda_home_match[i], lambda_away_match[i], gamma);
     }
   } else {
-    for (i in 1 : N) {
-      target += weights_match[i]
-                * skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i]);
+    for (i in 1:N) {
+      target += weights_match[i] * zero_inflated_skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i], gamma);
     }
   }
 }
+
 generated quantities {
   vector[N] ll_skellam_match;
+  vector[N] ll_zi_skellam_match;
   vector[N] pred_goal_diff_match;
-  vector[N] pred_home_goals_match;
-  vector[N] pred_away_goals_match;
 
-  for (i in 1 : N) {
-    // Log likelihood for goal differences
+
+  for (i in 1:N) {
+    // Log likelihood for standard Skellam (for comparison)
     ll_skellam_match[i] = skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i]);
 
-    // Generate predictions
-    pred_goal_diff_match[i] = skellam_rng(lambda_home_match[i],
-                                          lambda_away_match[i]);
+    // Log likelihood for zero-inflated Skellam
+    ll_zi_skellam_match[i] = zero_inflated_skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i], gamma);
 
-    // Also predict individual goals for interpretability
-    pred_home_goals_match[i] = poisson_rng(lambda_home_match[i]);
-    pred_away_goals_match[i] = poisson_rng(lambda_away_match[i]);
+    // Generate predictions
+    pred_goal_diff_match[i] = zero_inflated_skellam_rng(lambda_home_match[i], lambda_away_match[i], gamma);
   }
 }
