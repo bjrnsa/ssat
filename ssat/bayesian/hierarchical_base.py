@@ -1,5 +1,6 @@
 """Base class for hierarchical sports prediction models."""
 
+import re
 from typing import Any, Dict, Optional, Union
 
 import arviz as az
@@ -14,77 +15,65 @@ from ssat.bayesian.base_model import BaseModel, FitError
 class HierarchicalBaseModel(BaseModel):
     """Base class for hierarchical sports prediction models."""
 
-    def _data_dict(
-        self,
-        X: pd.DataFrame,
-        Z: pd.DataFrame,
-        weights: Optional[NDArray[np.float64]] = None,
-        fit: bool = True,
-    ) -> Dict[str, Any]:
-        """Prepare data dictionary for Stan model.
+    @property
+    def teams_(self) -> np.ndarray:
+        """Get the team names."""
+        return self._entities
+
+    @property
+    def n_teams_(self) -> int:
+        """Get the number of teams."""
+        return self._n_entities
+
+    @property
+    def team_map_(self) -> Dict[str, int]:
+        """Get the team mapping."""
+        return self._entity_map
+
+    @property
+    def match_ids_(self) -> np.ndarray:
+        """Get the match IDs."""
+        return self._match_ids
+
+    @match_ids_.setter
+    def match_ids_(self, value: np.ndarray) -> None:
+        """Set the match IDs."""
+        self._match_ids = value
+
+    def _validate_teams(self, teams: list[str]) -> None:
+        """Validate that all teams exist in the team mapping.
+
+        Parameters
+        ----------
+        teams : list[str]
+            List of team names to validate
+
+        Raises:
+        -------
+        ValueError:
+            If any team is not found in the mapping
+        """
+        unknown = set(teams) - set(self.team_map_.keys())
+        if unknown:
+            raise ValueError(f"Unknown teams: {unknown}")
+
+    def _validate_X(self, X: pd.DataFrame, fit: bool = True) -> None:
+        """Validate the input data.
 
         Parameters
         ----------
         X : pd.DataFrame
-            Training data with team names.
-        Z : pd.DataFrame
-            Additional data, must include home and away goals.
-        weights : Optional[NDArray[np.float64]], optional
-            Match weights. Defaults to None.
+            Input data to validate
         fit : bool, optional
-            Whether the data is for fitting or prediction. Defaults to True.
+            Whether this is for fitting or prediction, by default True
 
-        Returns:
+        Raises:
         -------
-        Dict[str, Any]
-            Data dictionary for Stan model.
+        ValueError:
+            If validation fails
         """
-        if fit:
-            # Extract team data (first two columns)
-            home_team = X.iloc[:, 0].to_numpy()
-            away_team = X.iloc[:, 1].to_numpy()
-
-            # Team setup
-            teams = np.unique(np.concatenate([home_team, away_team]))
-            n_teams = len(teams)
-            team_map = {team: idx + 1 for idx, team in enumerate(teams)}
-
-            # Save team setup for future use
-            self.teams_ = teams
-            self.n_teams_ = n_teams
-            self.team_map_ = team_map
-            self.match_ids_ = X.index.to_numpy()
-            home_goals = Z.iloc[:, 0].to_numpy()
-            away_goals = Z.iloc[:, 1].to_numpy()
-        else:
-            home_team = X.iloc[:, 0].to_numpy()
-            away_team = X.iloc[:, 1].to_numpy()
-
-            # Use existing team setup
-            team_map = self.team_map_
-
-            # Set goals to zero since they are not used
-            home_goals = np.zeros(len(X), dtype=int)
-            away_goals = np.zeros(len(X), dtype=int)
-
-        # Create team indices
-        home_idx = np.array([team_map[team] for team in home_team])
-        away_idx = np.array([team_map[team] for team in away_team])
-
-        # Create data dictionary with new naming conventions
-        data_dict = {
-            "N": len(X),
-            "T": self.n_teams_,
-            "home_team_idx_match": home_idx,  # Updated name
-            "home_goals_obs_match": home_goals,  # Updated name
-            "away_team_idx_match": away_idx,  # Updated name
-            "away_goals_obs_match": away_goals,  # Updated name
-            "weights_match": weights
-            if weights is not None
-            else np.ones(len(X)),  # Updated name
-        }
-
-        return data_dict
+        if len(X.columns) < 2:
+            raise ValueError("X must have at least 2 columns for home and away teams")
 
     def predict(
         self,
@@ -120,9 +109,9 @@ class HierarchicalBaseModel(BaseModel):
 
         Raises:
         ------
-        ValueError
+        ValueError:
             If model is not fitted, teams are unknown, or invalid parameters
-        FitError
+        FitError:
             If prediction fails
         """
         if not self.is_fitted_:
@@ -218,9 +207,9 @@ class HierarchicalBaseModel(BaseModel):
 
         Raises:
         ------
-        ValueError
+        ValueError:
             If model is not fitted, teams are unknown, or invalid parameters
-        FitError
+        FitError:
             If prediction fails
         """
         if not self.is_fitted_:

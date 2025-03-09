@@ -9,7 +9,12 @@ keywords = ["sports", "statistics", "analysis", "modeling", "prediction"]
 authors = [{ name = "Bjørn Aagaard", email = "aagaardbs@gmail.com" }]
 
 # Core dependencies required for basic functionality
-dependencies = ["numpy>=2.1.3", "pandas>=2.2.3", "scipy>=1.15.1"]
+dependencies = [
+    "cmdstanpy>=1.2.5",
+    "numpy>=2.1.3",
+ "pandas>=2.2.3",
+ "scipy>=1.15.1",
+]
 
 [project.optional-dependencies]
 # Interactive development and visualization
