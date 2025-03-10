@@ -73,7 +73,7 @@ target-version = "py39"
 
 [tool.ruff.lint]
 select = [
-    # "F", # pyflakes
+    "F", # pyflakes
     "D", # pydocstyle
 ]
 

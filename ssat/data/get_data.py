@@ -9,8 +9,8 @@ from flashscore_scraper.data_loaders import Handball, Volleyball
 db_path = Path(os.environ.get("DB_PATH", "database/database.db"))
 loader = Handball(db_path=db_path)
 loader_params = {
-    "league": "Herre Handbold Ligaen",
-    "seasons": ["2024/2025"],
+    "league": "European Championship",
+    # "seasons": ["2024/2025"],
     "date_range": None,
     "team_filters": None,
     # "include_additional_data": True,

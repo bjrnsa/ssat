@@ -7,24 +7,24 @@ import pandas as pd
 from ssat.bayesian.base_model import BaseModel
 
 
-class NegBinom(BaseModel):
-    """Bayesian Negative Binomial Model for predicting match scores.
+class EloRating(BaseModel):
+    """Bayesian Elo Rating Model for predicting match scores.
 
-    This model uses a negative binomial distribution to model goal scoring,
+    This model uses Elo ratings to model goal scoring,
     accounting for both team attack and defense capabilities.
     """
 
     def __init__(
         self,
-        stem: str = "nbinom",
+        stem: str = "elo_rating",
     ):
-        """Initialize the Negative Binomial model.
+        """Initialize the Elo Rating model.
 
         Parameters
         ----------
         stem : str, optional
             Stem name for the Stan model file.
-            Defaults to "nbinom".
+            Defaults to "elo_rating".
         """
         super().__init__(stan_file=stem)
 
@@ -32,9 +32,13 @@ class NegBinom(BaseModel):
 if __name__ == "__main__":
     # Example usage
     df = pd.read_pickle("ssat/data/handball_data.pkl")
-    df = df[["home_team", "away_team", "home_goals", "away_goals"]]
-    model = NegBinom()
+    df = df[["home_team", "away_team", "result"]]
+
+    model = EloRating()
     model.fit(df)
+    # Visualize results
+    model.plot_trace(var_names=["rating", "home_adv", "K", "draw_width"])
+    model.plot_team_stats()
 
     # Make predictions
     matches = pd.DataFrame(
@@ -42,7 +46,3 @@ if __name__ == "__main__":
     )
     pred = model.predict(matches)
     proba = model.predict_proba(matches)
-
-    # Visualize results
-    model.plot_trace()
-    model.plot_team_stats()

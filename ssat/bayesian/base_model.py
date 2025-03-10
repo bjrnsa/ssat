@@ -9,102 +9,23 @@ It handles common functionality such as:
 - Parameter management
 """
 
-import hashlib
 import logging
 import re
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from abc import ABC
 from pathlib import Path
-from typing import (
-    Any,
-    Dict,
-    List,
-    Optional,
-    Protocol,
-    TypeVar,
-    Union,
-    runtime_checkable,
-)
+from typing import Any, Dict, List, Optional, Union
 
 import arviz as az
 import cmdstanpy
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from numpy.typing import NDArray
-
-# Type variables for generic typing
-T = TypeVar("T", bound="BaseModel")
-DataType = TypeVar("DataType", pd.DataFrame, np.ndarray)
 
 # Configure cmdstanpy logging
 logger = logging.getLogger("cmdstanpy")
 logger.addHandler(logging.NullHandler())
 logger.propagate = False
 logger.setLevel(logging.CRITICAL)
-
-
-@runtime_checkable
-class ModelData(Protocol):
-    """Protocol defining the required structure for model data."""
-
-    def validate(self) -> bool:
-        """Validate the data structure."""
-        ...
-
-    def to_stan_input(self) -> Dict[str, Any]:
-        """Convert to Stan input format."""
-        ...
-
-
-@dataclass
-class MCMCConfig:
-    """Configuration for MCMC sampling."""
-
-    draws: int = 8000
-    warmup: int = 2000
-    chains: int = 4
-    seed: int = 1
-
-
-class ModelError(Exception):
-    """Base exception for model-related errors."""
-
-    pass
-
-
-class ValidationError(ModelError):
-    """Raised when data validation fails."""
-
-    pass
-
-
-class FitError(ModelError):
-    """Raised when model fitting fails."""
-
-    pass
-
-
-class ConvergenceError(ModelError):
-    """Raised when MCMC convergence diagnostics fail."""
-
-    pass
-
-
-@dataclass
-class ModelState:
-    """Container for model state variables."""
-
-    team_map: Dict[str, int] = field(default_factory=dict)
-    is_fitted: bool = False
-    fit_result: Optional[cmdstanpy.CmdStanMCMC] = None
-    inference_data: Optional[az.InferenceData] = None
-    n_teams: Optional[int] = None
-    n_samples: Optional[int] = None
-    n_chains: int = 0
-    n_draws: Optional[int] = None
-    model: Optional[cmdstanpy.CmdStanModel] = None
-    src_info: Dict[str, Any] = field(default_factory=dict)
 
 
 class BaseModel(ABC):
@@ -121,7 +42,6 @@ class BaseModel(ABC):
     def __init__(
         self,
         stan_file: str = "base",
-        mcmc_config: Optional[MCMCConfig] = None,
     ) -> None:
         """Initialize the Bayesian base model.
 
@@ -137,89 +57,22 @@ class BaseModel(ABC):
         ValueError
             If Stan file does not exist
         """
-        # Initialize model state
-        self._state = ModelState()
-
         # Configuration
         self._stan_file = Path("ssat/bayesian/stan_files") / f"{stan_file}.stan"
         if not self._stan_file.exists():
             raise ValueError(f"Stan file not found: {self._stan_file}")
 
-        self._mcmc_config = mcmc_config or MCMCConfig()
-
         # Parse Stan file and print data requirements
         self._parse_stan_file()
         self._print_data_requirements()
 
-    def _compile_and_fit_stan_model(
-        self,
-        data: Dict[str, Any],
-        draws: Optional[int] = None,
-        warmup: Optional[int] = None,
-        chains: Optional[int] = None,
-    ) -> cmdstanpy.CmdStanMCMC:
-        """Compile and fit Stan model with MCMC sampling with caching.
-
-        Parameters
-        ----------
-        data : Dict[str, Any]
-            Data for Stan model
-        draws : Optional[int]
-            Number of posterior samples per chain
-        warmup : Optional[int]
-            Number of warmup iterations
-        chains : Optional[int]
-            Number of MCMC chains
-
-        Returns:
-        -------
-        cmdstanpy.CmdStanMCMC
-            Fitted Stan model
-
-        Raises:
-        ------
-        FitError
-            If model fitting fails
-        """
-        try:
-            # Use MCMCConfig defaults if not specified
-            mcmc_config = self._mcmc_config
-            draws = draws or mcmc_config.draws
-            warmup = warmup or mcmc_config.warmup
-            chains = chains or mcmc_config.chains
-
-            # Compile model
-            model = cmdstanpy.CmdStanModel(stan_file=self._stan_file)
-
-            # Run sampling
-            fit_result = model.sample(
-                data=data,
-                iter_sampling=draws,
-                iter_warmup=warmup,
-                chains=chains,
-                seed=mcmc_config.seed,
-            )
-
-            # Update model state
-            self._state.is_fitted = True
-            self._state.fit_result = fit_result
-            self._state.n_chains = chains
-            self._state.n_draws = draws
-            self._state.n_samples = draws * chains
-            self._state.model = model
-            self._state.src_info = model.src_info()
-
-            return fit_result
-
-        except Exception as e:
-            raise FitError(f"Failed to fit model: {str(e)}") from e
-
     def fit(
         self,
         data: Union[np.ndarray, pd.DataFrame],
-        draws: Optional[int] = None,
-        warmup: Optional[int] = None,
-        chains: Optional[int] = None,
+        draws: int = 8000,
+        warmup: int = 2000,
+        chains: int = 4,
+        seed: Optional[int] = 1,
     ) -> "BaseModel":
         """Fit the model using MCMC sampling.
 
@@ -249,20 +102,29 @@ class BaseModel(ABC):
         # Prepare data dictionary
         data_dict = self._data_dict(data, fit=True)
 
-        # Run MCMC sampling
-        try:
-            self._compile_and_fit_stan_model(
-                data=data_dict,
-                draws=draws,
-                warmup=warmup,
-                chains=chains,
-            )
+        # Compile model
+        model = cmdstanpy.CmdStanModel(stan_file=self._stan_file)
 
-            # Generate inference data
-            self._generate_inference_data(data_dict)
+        # Run sampling
+        fit_result = model.sample(
+            data=data_dict,
+            iter_sampling=draws,
+            iter_warmup=warmup,
+            chains=chains,
+            seed=seed,
+        )
 
-        except Exception as e:
-            raise FitError(f"Failed to fit model: {str(e)}") from e
+        # Update model state
+        self.is_fitted = True
+        self.fit_result = fit_result
+        self.n_chains = chains
+        self.n_draws = draws
+        self.n_samples = draws * chains
+        self.model = model
+        self.src_info = model.src_info()
+
+        # Generate inference data
+        self._generate_inference_data(data_dict)
 
         return self
 
@@ -291,7 +153,7 @@ class BaseModel(ABC):
         ValueError
             If model is not fitted
         """
-        if not self.is_fitted_:
+        if not self.is_fitted:
             raise ValueError("Model must be fit before making predictions")
 
         data_dict = self._data_dict(data, fit=False)
@@ -299,27 +161,23 @@ class BaseModel(ABC):
         if self.model is None or self.fit_result is None:
             raise ValueError("Model not properly initialized")
 
-        try:
-            # Generate predictions using Stan model
-            preds = self.model.generate_quantities(
-                data=data_dict, previous_fit=self.fit_result
+        # Generate predictions using Stan model
+        preds = self.model.generate_quantities(
+            data=data_dict, previous_fit=self.fit_result
+        )
+        predictions = np.array(
+            [preds.stan_variable(pred_var) for pred_var in self.pred_vars]
+        )
+
+        if return_matches:
+            return predictions
+
+        else:
+            return self._format_predictions(
+                data,
+                np.median(predictions, axis=1).T,
+                col_names=self.pred_vars,
             )
-            predictions = np.array(
-                [preds.stan_variable(pred_var) for pred_var in self.pred_vars]
-            )
-
-            if return_matches:
-                return predictions
-
-            else:
-                return self._format_predictions(
-                    data,
-                    np.median(predictions, axis=1).T,
-                    col_names=self.pred_vars,
-                )
-
-        except Exception as e:
-            raise FitError(f"Failed to generate predictions: {str(e)}") from e
 
     def predict_proba(
         self,
@@ -349,7 +207,7 @@ class BaseModel(ABC):
         ValueError
             If model is not fitted or if outcome is invalid
         """
-        if not self.is_fitted_:
+        if not self.is_fitted:
             raise ValueError("Model must be fit before making predictions")
 
         if outcome not in [None, "home", "away", "draw"]:
@@ -386,6 +244,43 @@ class BaseModel(ABC):
             col_names=["home", "draw", "away"],
         )
 
+    def plot_trace(
+        self,
+        var_names: Optional[list[str]] = [
+            "attack_team",
+            "defence_team",
+            "home_advantage",
+        ],
+    ) -> None:
+        """Plot trace of the model.
+
+        Parameters
+        ----------
+        var_names : Optional[list[str]], optional
+            List of variable names to plot, by default None
+            Keyword arguments passed to arviz.plot_trace
+        """
+        az.plot_trace(
+            self.inference_data,
+            var_names=var_names,
+            compact=True,
+            combined=True,
+        )
+
+        plt.tight_layout()
+        plt.show()
+
+    def plot_team_stats(self) -> None:
+        """Plot team strength statistics."""
+        ax = az.plot_forest(
+            self.inference_data.posterior.attack_team
+            - self.inference_data.posterior.defence_team,
+            labeller=TeamLabeller(),
+        )
+        ax[0].set_title("Overall Team Strength")
+        plt.tight_layout()
+        plt.show()
+
     def _format_predictions(
         self,
         data: Union[np.ndarray, pd.DataFrame],
@@ -396,20 +291,6 @@ class BaseModel(ABC):
             return pd.DataFrame(predictions, index=self._match_ids, columns=col_names)
         else:
             return predictions
-
-    # @abstractmethod
-    def get_team_ratings(self) -> pd.DataFrame:
-        """Get team ratings with uncertainty quantification.
-
-        Returns:
-        -------
-        pd.DataFrame
-            Team ratings including:
-            - Posterior means
-            - Credible intervals
-            - Additional team-specific parameters
-        """
-        pass
 
     def _generate_inference_data(self, data: Dict[str, Any]) -> None:
         """Generate inference data from Stan fit result.
@@ -427,7 +308,7 @@ class BaseModel(ABC):
         ValueError
             If model is not fitted
         """
-        if not self.is_fitted_:
+        if not self.is_fitted:
             raise ValueError("Model must be fit before generating inference data")
 
         if self.model is None or self.fit_result is None:
@@ -497,35 +378,6 @@ class BaseModel(ABC):
             log_likelihood=log_likelihood,
         )
 
-    def plot_trace(self) -> None:
-        """Plot trace of the model.
-
-        Parameters
-        ----------
-        **kwargs : dict
-            Keyword arguments passed to arviz.plot_trace
-        """
-        az.plot_trace(
-            self.inference_data,
-            var_names=["attack_team", "defence_team", "home_advantage"],
-            compact=True,
-            combined=True,
-        )
-
-        plt.tight_layout()
-        plt.show()
-
-    def plot_team_stats(self) -> None:
-        """Plot team strength statistics."""
-        ax = az.plot_forest(
-            self.inference_data.posterior.attack_team
-            - self.inference_data.posterior.defence_team,
-            labeller=TeamLabeller(),
-        )
-        ax[0].set_title("Overall Team Strength")
-        plt.tight_layout()
-        plt.show()
-
     def _validate_teams(self, teams: List[str]) -> None:
         """Validate team existence in the model.
 
@@ -554,118 +406,7 @@ class BaseModel(ABC):
         if not self.is_fitted_:
             raise ValueError("Model has not been fitted yet")
 
-    @property
-    def team_map_(self) -> Dict[str, int]:
-        """Maintain backward compatibility for team_map_ attribute."""
-        return self._state.team_map
-
-    @team_map_.setter
-    def team_map_(self, value: Dict[str, int]) -> None:
-        """Set team map."""
-        self._state.team_map = value
-
-    @property
-    def is_fitted_(self) -> bool:
-        """Maintain backward compatibility for is_fitted_ attribute."""
-        return self._state.is_fitted
-
-    @is_fitted_.setter
-    def is_fitted_(self, value: bool) -> None:
-        """Set fitted status."""
-        self._state.is_fitted = value
-
-    @property
-    def fit_result(self) -> Optional[cmdstanpy.CmdStanMCMC]:
-        """Access to fit result."""
-        return self._state.fit_result
-
-    @fit_result.setter
-    def fit_result(self, value: Optional[cmdstanpy.CmdStanMCMC]) -> None:
-        """Set fit result."""
-        self._state.fit_result = value
-
-    @property
-    def inference_data(self) -> Optional[az.InferenceData]:
-        """Access to inference data."""
-        return self._state.inference_data
-
-    @inference_data.setter
-    def inference_data(self, value: Optional[az.InferenceData]) -> None:
-        """Set inference data."""
-        self._state.inference_data = value
-
-    @property
-    def n_teams_(self) -> Optional[int]:
-        """Access to number of teams."""
-        return self._state.n_teams
-
-    @n_teams_.setter
-    def n_teams_(self, value: Optional[int]) -> None:
-        """Set number of teams."""
-        self._state.n_teams = value
-
-    @property
-    def n_samples_(self) -> Optional[int]:
-        """Access to number of samples."""
-        return self._state.n_samples
-
-    @n_samples_.setter
-    def n_samples_(self, value: Optional[int]) -> None:
-        """Set number of samples."""
-        self._state.n_samples = value
-
-    @property
-    def n_chains_(self) -> int:
-        """Access to number of chains."""
-        return self._state.n_chains
-
-    @n_chains_.setter
-    def n_chains_(self, value: int) -> None:
-        """Set number of chains."""
-        self._state.n_chains = value
-
-    @property
-    def n_draws_(self) -> Optional[int]:
-        """Access to number of draws."""
-        return self._state.n_draws
-
-    @n_draws_.setter
-    def n_draws_(self, value: Optional[int]) -> None:
-        """Set number of draws."""
-        self._state.n_draws = value
-
-    @property
-    def STAN_FILE(self) -> Path:
-        """Access to Stan file path."""
-        return self._stan_file
-
-    @property
-    def cache_dir(self) -> Path:
-        """Access to cache directory."""
-        return self._cache_dir
-
-    @property
-    def model(self) -> Optional[cmdstanpy.CmdStanModel]:
-        """Access to Stan model."""
-        return self._state.model
-
-    @model.setter
-    def model(self, value: Optional[cmdstanpy.CmdStanModel]) -> None:
-        """Set Stan model."""
-        self._state.model = value
-
-    @property
-    def src_info(self) -> Dict[str, Any]:
-        """Access to model source information."""
-        return self._state.src_info
-
-    @src_info.setter
-    def src_info(self, value: Dict[str, Any]) -> None:
-        """Set model source information."""
-        self._state.src_info = value
-
     def _parse_stan_file(self) -> None:
-        """Parse the Stan file to extract data block requirements."""
         with open(self._stan_file, "r") as f:
             content = f.read()
 
@@ -909,6 +650,9 @@ class BaseModel(ABC):
 
 
 class TeamLabeller(az.labels.BaseLabeller):
+    """Custom labeler for team indices."""
+
     def make_label_flat(self, var_name, sel, isel):
+        """Generate flat label for team indices."""
         sel_str = self.sel_to_str(sel, isel)
         return sel_str
