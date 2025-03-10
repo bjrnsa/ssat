@@ -5,17 +5,24 @@
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![PyPI](https://img.shields.io/pypi/v/ssat)](https://pypi.org/project/ssat/)
 
-SSAT is a Python package implementing statistical models for sports analytics. The package provides a collection of frequentist statistical models for analyzing and predicting sports match outcomes.
+SSAT is a Python package implementing statistical models for sports analytics. The package provides a collection of frequentist and Bayesian statistical models for analyzing and predicting sports match outcomes.
 
 ## Key Features
 
 - **Multiple Statistical Models**:
-  - Bradley-Terry Model: Paired comparison model for team rankings
-  - TOOR (Team Offense-Offense Rating): Offensive performance analysis
-  - GSSD (Goal Scoring Statistical Distribution): Goal distribution modeling
-  - ZSD (Zero-Score Distribution): Special case handling for 0-0 outcomes
-  - PRP (Possession-based Rating Process): Team rating based on possession metrics
-  - Poisson Model: Classic goal-scoring probability distribution
+  - Frequentist Models:
+    - Bradley-Terry Model: Paired comparison model for team rankings
+    - TOOR (Team Offense-Offense Rating): Offensive performance analysis
+    - GSSD (Goal Scoring Statistical Distribution): Goal distribution modeling
+    - ZSD (Zero-Score Distribution): Special case handling for 0-0 outcomes
+    - PRP (Possession-based Rating Process): Team rating based on possession metrics
+    - Poisson Model: Classic goal-scoring probability distribution
+  - Bayesian Models:
+    - Bayesian Poisson: Probabilistic goal-scoring model with team attack/defense capabilities
+    - Negative Binomial: Overdispersed goal-scoring model for higher variance
+    - Zero-Inflated Negative Binomial: Handles excess zeros in low-scoring matches
+    - Skellam: Direct modeling of goal differences
+    - Zero-Inflated Skellam: Enhanced modeling of draws and low-scoring games
 
 - **Data Processing**: Integrated with flashscore-scraper for automated data collection
 - **Visualization**: Comprehensive plotting utilities for model analysis
@@ -69,6 +76,94 @@ poisson_predictions = poisson_model.predict(X)
 # Predict probabilities
 bt_probas = bt_model.predict_proba(X, Z, point_spread=0, include_draw=True)
 poisson_probas = poisson_model.predict_proba(X, Z, point_spread=0, include_draw=True)
+```
+
+## Bayesian Models
+
+SSAT's Bayesian models provide probabilistic predictions with uncertainty quantification. These models use MCMC sampling via Stan to estimate team strengths and predict match outcomes.
+
+### Available Models
+
+1. **Bayesian Poisson**
+   ```python
+   from ssat.bayesian import Poisson
+
+   model = Poisson()
+   model.fit(X)  # X contains [home_team, away_team, home_goals, away_goals]
+
+   # Make predictions
+   predictions = model.predict(new_matches)
+   probabilities = model.predict_proba(new_matches, point_spread=0)
+
+   # Visualize team strengths
+   model.plot_team_stats()
+   ```
+
+2. **Negative Binomial**
+   ```python
+   from ssat.bayesian import NegBinom
+
+   model = NegBinom()
+   model.fit(X)
+   ```
+   Better suited for matches with higher scoring variance.
+
+3. **Zero-Inflated Models**
+   ```python
+   from ssat.bayesian import NegBinomZero, SkellamZero
+
+   model = NegBinomZero()  # or SkellamZero()
+   model.fit(X)
+   ```
+   Specifically designed for competitions with frequent low scores or draws.
+
+### Model Features
+
+- **Uncertainty Quantification**: All predictions include credible intervals
+- **Team Statistics**: Analyze attack and defense capabilities per team
+- **Visualization Tools**:
+  ```python
+  # View MCMC diagnostics
+  model.plot_trace()
+
+  # Analyze team strengths
+  model.plot_team_stats()
+  ```
+- **Flexible Predictions**:
+  - Win/Draw/Loss probabilities
+  - Expected goals
+  - Custom point spread predictions
+
+### Example Usage
+
+```python
+import pandas as pd
+from ssat.bayesian import Poisson
+
+# Load match data
+matches = pd.DataFrame({
+    'home_team': ['TeamA', 'TeamB', ...],
+    'away_team': ['TeamB', 'TeamC', ...],
+    'home_goals': [2, 1, ...],
+    'away_goals': [1, 2, ...]
+})
+
+# Initialize and fit model
+model = Poisson()
+model.fit(matches)
+
+# Predict new matches
+new_matches = pd.DataFrame({
+    'home_team': ['TeamA'],
+    'away_team': ['TeamC']
+})
+
+# Get win probabilities
+probs = model.predict_proba(new_matches)
+print(f"Win probability: {probs[0]:.2%}")
+
+# Analyze team strengths
+model.plot_team_stats()
 ```
 
 ## Data Sources

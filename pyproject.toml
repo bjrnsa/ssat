@@ -1,6 +1,6 @@
 [project]
 name = "ssat"
-version = "0.0.1"
+version = "0.0.2"
 description = "SSAT: Statistical Sports Analysis Toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -9,7 +9,16 @@ keywords = ["sports", "statistics", "analysis", "modeling", "prediction"]
 authors = [{ name = "Bjørn Aagaard", email = "aagaardbs@gmail.com" }]
 
 # Core dependencies required for basic functionality
-dependencies = ["numpy>=2.1.3", "pandas>=2.2.3", "scipy>=1.15.1"]
+dependencies = [
+    "cmdstanpy>=1.2.5",
+    "numpy>=2.1.3",
+    "pandas>=2.2.3",
+    "scipy>=1.15.1",
+    "arviz>=0.20.0",
+    "cmdstanpy>=1.2.5",
+    "seaborn>=0.13.2",
+    "matplotlib>=3.10.1",
+]
 
 [project.optional-dependencies]
 # Interactive development and visualization
@@ -20,11 +29,6 @@ dev = [
     "matplotlib>=3.10.1",
 ]
 
-# Bayesian modeling capabilities
-bayesian = ["arviz>=0.20.0", "cmdstanpy>=1.2.5"]
-
-# Enhanced plotting capabilities
-plot = ["seaborn>=0.13.2", "matplotlib>=3.10.1"]
 
 # Data acquisition and processing
 data = [
