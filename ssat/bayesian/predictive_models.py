@@ -154,3 +154,26 @@ class SkellamZero(Poisson):
             Defaults to "skellam_zero".
         """
         super().__init__(stem=stem)
+
+
+class SkellamZeroWeighted(Poisson):
+    """Bayesian Zero-inflated Skellam Model for predicting match scores.
+
+    This model uses a zero-inflated Skellam distribution to model goal differences,
+    particularly suitable for low-scoring matches or competitions with frequent draws.
+    The zero-inflation component explicitly models the probability of a draw.
+    """
+
+    def __init__(
+        self,
+        stem: str = "skellam_zero_weighted",
+    ):
+        """Initialize the Zero-inflated Skellam Weighted model.
+
+        Parameters
+        ----------
+        stem : str, optional
+            Stem name for the Stan model file.
+            Defaults to "skellam_zero_weighted".
+        """
+        super().__init__(stem=stem)

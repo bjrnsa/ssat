@@ -2310,13 +2310,16 @@ wheels = [
 
 [[package]]
 name = "ssat"
-version = "0.0.1"
+version = "0.0.2"
 source = { editable = "." }
 dependencies = [
+    { name = "arviz" },
     { name = "cmdstanpy" },
+    { name = "matplotlib" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "scipy" },
+    { name = "seaborn" },
 ]
 
 [package.optional-dependencies]
@@ -2334,10 +2337,6 @@ all = [
     { name = "seaborn" },
     { name = "statsmodels" },
 ]
-bayesian = [
-    { name = "arviz" },
-    { name = "cmdstanpy" },
-]
 data = [
     { name = "beautifulsoup4" },
     { name = "flashscore-scraper" },
@@ -2353,20 +2352,15 @@ ml = [
     { name = "scikit-learn" },
     { name = "statsmodels" },
 ]
-plot = [
-    { name = "matplotlib" },
-    { name = "seaborn" },
-]
 
 [package.metadata]
 requires-dist = [
+    { name = "arviz", specifier = ">=0.20.0" },
     { name = "arviz", marker = "extra == 'all'", specifier = ">=0.20.0" },
-    { name = "arviz", marker = "extra == 'bayesian'", specifier = ">=0.20.0" },
     { name = "beautifulsoup4", marker = "extra == 'all'", specifier = ">=4.12.0" },
     { name = "beautifulsoup4", marker = "extra == 'data'", specifier = ">=4.12.0" },
     { name = "cmdstanpy", specifier = ">=1.2.5" },
     { name = "cmdstanpy", marker = "extra == 'all'", specifier = ">=1.2.5" },
-    { name = "cmdstanpy", marker = "extra == 'bayesian'", specifier = ">=1.2.5" },
     { name = "flashscore-scraper", marker = "extra == 'all'", specifier = ">=0.0.5" },
     { name = "flashscore-scraper", marker = "extra == 'data'", specifier = ">=0.0.5" },
     { name = "ipykernel", marker = "extra == 'all'", specifier = ">=6.29.5" },
@@ -2375,9 +2369,9 @@ requires-dist = [
     { name = "ipywidgets", marker = "extra == 'dev'", specifier = ">=8.1.5" },
     { name = "jupyter", marker = "extra == 'all'", specifier = ">=1.1.1" },
     { name = "jupyter", marker = "extra == 'dev'", specifier = ">=1.1.1" },
+    { name = "matplotlib", specifier = ">=3.10.1" },
     { name = "matplotlib", marker = "extra == 'all'", specifier = ">=3.10.1" },
     { name = "matplotlib", marker = "extra == 'dev'", specifier = ">=3.10.1" },
-    { name = "matplotlib", marker = "extra == 'plot'", specifier = ">=3.10.1" },
     { name = "numpy", specifier = ">=2.1.3" },
     { name = "pandas", specifier = ">=2.2.3" },
     { name = "requests", marker = "extra == 'all'", specifier = ">=2.31.0" },
@@ -2385,12 +2379,12 @@ requires-dist = [
     { name = "scikit-learn", marker = "extra == 'all'", specifier = ">=1.6.1" },
     { name = "scikit-learn", marker = "extra == 'ml'", specifier = ">=1.6.1" },
     { name = "scipy", specifier = ">=1.15.1" },
+    { name = "seaborn", specifier = ">=0.13.2" },
     { name = "seaborn", marker = "extra == 'all'", specifier = ">=0.13.2" },
-    { name = "seaborn", marker = "extra == 'plot'", specifier = ">=0.13.2" },
     { name = "statsmodels", marker = "extra == 'all'", specifier = ">=0.14.4" },
     { name = "statsmodels", marker = "extra == 'ml'", specifier = ">=0.14.4" },
 ]
-provides-extras = ["dev", "bayesian", "plot", "data", "ml", "all"]
+provides-extras = ["dev", "data", "ml", "all"]
 
 [[package]]
 name = "stack-data"
