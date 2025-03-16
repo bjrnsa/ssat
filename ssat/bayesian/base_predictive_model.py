@@ -22,6 +22,22 @@ class TeamLabeller(az.labels.BaseLabeller):
 class PredictiveModel(BaseModel):
     """Abstract base class for Bayesian predictive models that can predict matches."""
 
+    kwargs = {
+        "iter_sampling": 10000,
+        "iter_warmup": 2000,
+        "chains": 4,
+        "seed": 1,
+        # "adapt_delta": 0.95,
+        # "max_treedepth": 12,
+        # "step_size": 0.5,
+        "show_console": False,
+        "parallel_chains": 10,
+    }
+
+    def _get_model_inits(self) -> Optional[Dict[str, Any]]:
+        """Get model inits for Stan model."""
+        return None
+
     def _format_predictions(
         self,
         data: Union[np.ndarray, pd.DataFrame],
@@ -33,22 +49,43 @@ class PredictiveModel(BaseModel):
         else:
             return predictions
 
-    def fit(self, data: Union[np.ndarray, pd.DataFrame], **kwargs) -> "PredictiveModel":
-        """Fit the model using MCMC sampling."""
+    def fit(
+        self,
+        base_data: Union[np.ndarray, pd.DataFrame],
+        model_data: Optional[Union[np.ndarray, pd.DataFrame]] = None,
+        **kwargs,
+    ) -> "PredictiveModel":
+        """Fit the model using MCMC sampling.
+
+        Parameters
+        ----------
+        base_data : Union[np.ndarray, pd.DataFrame]
+            Base data required by all models (e.g., team indices, scores)
+        model_data : Optional[Union[np.ndarray, pd.DataFrame]], optional
+            Additional model-specific data (e.g., weights, covariates)
+        **kwargs : dict
+            Additional keyword arguments for sampling
+
+        Returns:
+        -------
+        PredictiveModel
+            The fitted model instance
+        """
         # Prepare data dictionary
-        data_dict = self._data_dict(data, fit=True)
+        data_dict = self._data_dict(base_data, model_data, fit=True)
 
         # Compile model
         model = cmdstanpy.CmdStanModel(stan_file=self._stan_file)
 
+        inits = self._get_model_inits()
+
+        # If update default kwargs
+        for key, value in self.kwargs.items():
+            if key not in kwargs:
+                kwargs[key] = value
+
         # Run sampling
-        fit_result = model.sample(
-            data=data_dict,
-            iter_sampling=kwargs.get("draws", 8000),
-            iter_warmup=kwargs.get("warmup", 2000),
-            chains=kwargs.get("chains", 4),
-            seed=kwargs.get("seed", 1),
-        )
+        fit_result = model.sample(data=data_dict, inits=inits, **kwargs)
 
         # Update model state
         self.is_fitted = True
@@ -63,28 +100,69 @@ class PredictiveModel(BaseModel):
 
     def _data_dict(
         self,
-        data: Union[np.ndarray, pd.DataFrame],
+        base_data: Union[np.ndarray, pd.DataFrame],
+        model_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
         fit: bool = True,
     ) -> Dict[str, Any]:
-        """Prepare data dictionary for Stan model dynamically based on Stan file requirements."""
-        # Convert data to numpy array if DataFrame
-        if isinstance(data, pd.DataFrame):
-            data_array = data.to_numpy()
-            self._match_ids = data.index.to_numpy()
+        """Prepare data dictionary for Stan model dynamically based on Stan file requirements.
+
+        Parameters
+        ----------
+        base_data : Union[np.ndarray, pd.DataFrame]
+            Base data required by all models (e.g., team indices, scores)
+        model_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
+            Additional model-specific data (e.g., weights, covariates)
+        fit : bool, optional
+            Whether this is for fitting (True) or prediction (False)
+
+        Returns:
+        -------
+        Dict[str, Any]
+            Dictionary of data for Stan model
+        """
+        # Convert base_data to numpy array if DataFrame
+        if isinstance(base_data, pd.DataFrame):
+            base_array = base_data.to_numpy()
+            self._match_ids = base_data.index.to_numpy()
         else:
-            data_array = np.asarray(data)
-            self._match_ids = np.arange(len(data_array))
+            base_array = np.asarray(base_data)
+            self._match_ids = np.arange(len(base_array))
+
+        # Convert model_data to numpy array if provided
+        model_array = None
+        if model_data is not None:
+            if isinstance(model_data, pd.Series):
+                model_array = model_data.to_numpy().reshape(-1, 1)
+            elif isinstance(model_data, pd.DataFrame):
+                model_array = model_data.to_numpy()
+            else:
+                model_array = np.asarray(model_data)
+                if model_array.ndim == 1:
+                    model_array = model_array.reshape(-1, 1)
+
+            # Validate shapes
+            if len(model_array) != len(base_array):
+                raise ValueError(
+                    f"model_data length ({len(model_array)}) must match base_data length ({len(base_array)})"
+                )
 
         # Initialize data dictionary with dimensions
         data_dict = {
-            "N": len(data_array),
+            "N": len(base_array),
         }
 
         # Group variables by their role
         index_vars = []
         dimension_vars = []
         data_vars = []
-        weight_vars = []
+        data_vars_prefix = [
+            "home_goals",
+            "away_goals",
+            "home_team",
+            "away_team",
+            "goal_diff",
+        ]
+        model_vars = []
 
         for var in self._data_vars:
             if var["name"].endswith("_idx_match"):
@@ -92,25 +170,26 @@ class PredictiveModel(BaseModel):
             elif var["name"] in ["N", "T"]:
                 dimension_vars.append(var)
             elif var["name"].endswith("_match"):
-                if "weights" in var["name"]:
-                    weight_vars.append(var)
-                else:
+                if any(prefix in var["name"] for prefix in data_vars_prefix):
                     data_vars.append(var)
+                else:
+                    model_vars.append(var)
 
-        # Track current column index
-        col_idx = 0
+        # Track current column index for base_data and model_data
+        base_col_idx = 0
+        model_col_idx = 0
 
         # Handle index columns (e.g., team indices)
         if index_vars:
             # Get unique entities and create mapping
             index_cols = []
             for _ in index_vars:
-                if col_idx >= data_array.shape[1]:
+                if base_col_idx >= base_array.shape[1]:
                     raise ValueError(
-                        f"Not enough columns in data. Expected index column at position {col_idx}"
+                        f"Not enough columns in base_data. Expected index column at position {base_col_idx}"
                     )
-                index_cols.append(data_array[:, col_idx])
-                col_idx += 1
+                index_cols.append(base_array[:, base_col_idx])
+                base_col_idx += 1
 
             teams = np.unique(np.concatenate(index_cols))
             n_teams = len(teams)
@@ -129,50 +208,56 @@ class PredictiveModel(BaseModel):
         for i, var in enumerate(index_vars):
             if not fit:
                 # Validate entities exist in mapping
-                unknown = set(data_array[:, i]) - set(self._team_map.keys())
+                unknown = set(base_array[:, i]) - set(self._team_map.keys())
                 if unknown:
                     raise ValueError(f"Unknown entities in column {i}: {unknown}")
                 team_map = self._team_map
 
             data_dict[var["name"]] = np.array(
-                [team_map[entity] for entity in data_array[:, i]]
+                [team_map[entity] for entity in base_array[:, i]]
             )
 
-        # Handle data columns
+        # Handle data columns from base_data
         for var in data_vars:
-            if col_idx >= data_array.shape[1]:
+            data_dtype = var["type"]
+            data_var_name = var["name"]
+            if base_col_idx >= base_array.shape[1]:
                 if not fit:
                     # For prediction, use zeros if column not provided
-                    data_dict[var["name"]] = np.zeros(
-                        len(data_array),
-                        dtype=np.int32 if var["type"] == "int" else np.float64,
+                    data_dict[data_var_name] = np.zeros(
+                        len(base_array),
+                        dtype=data_dtype,
                     )
                     continue
                 else:
                     raise ValueError(
-                        f"Not enough columns in data. Expected data column at position {col_idx}"
+                        f"Not enough columns in base_data. Expected data column at position {base_col_idx}"
                     )
 
             # Convert to correct type
-            if var["type"] == "int":
-                data_dict[var["name"]] = np.array(
-                    data_array[:, col_idx], dtype=np.int32
-                )
-            else:
-                data_dict[var["name"]] = np.array(
-                    data_array[:, col_idx], dtype=np.float64
-                )
-            col_idx += 1
+            data_dict[data_var_name] = np.array(
+                base_array[:, base_col_idx], dtype=data_dtype
+            )
+            base_col_idx += 1
 
-        # Handle weights
-        for var in weight_vars:
-            if col_idx < data_array.shape[1]:
-                data_dict[var["name"]] = np.array(
-                    data_array[:, col_idx], dtype=np.float64
+        # Handle weights and additional model-specific data
+        for var in model_vars:
+            model_var_name = var["name"]
+            model_dtype = var["type"]
+            if model_array is not None and model_col_idx < model_array.shape[1]:
+                data_dict[model_var_name] = np.array(
+                    model_array[:, model_col_idx], dtype=model_dtype
                 )
-                col_idx += 1
+                model_col_idx += 1
             else:
-                data_dict[var["name"]] = np.ones(len(data_array), dtype=np.float64)
+                if model_var_name == "weights_match":
+                    data_dict[model_var_name] = np.ones(
+                        len(base_array), dtype=model_dtype
+                    )
+                else:
+                    data_dict[model_var_name] = np.zeros(
+                        len(base_array), dtype=model_dtype
+                    )
 
         return data_dict
 
@@ -263,6 +348,8 @@ class PredictiveModel(BaseModel):
         self,
         data: Union[np.ndarray, pd.DataFrame],
         return_matches: bool = False,
+        func: str = "median",
+        sampling_method: Optional[str] = None,
     ) -> np.ndarray:
         """Generate predictions for new data."""
         if not self.is_fitted:
@@ -282,12 +369,14 @@ class PredictiveModel(BaseModel):
         )
 
         if return_matches:
+            self.predictions = predictions
             return predictions
 
         else:
+            self.predictions = predictions
             return self._format_predictions(
                 data,
-                np.median(predictions, axis=1).T,
+                getattr(np, func)(predictions, axis=1).T,
                 col_names=self.pred_vars,
             )
 
@@ -296,6 +385,8 @@ class PredictiveModel(BaseModel):
         data: Union[np.ndarray, pd.DataFrame],
         point_spread: float = 0.0,
         outcome: Optional[str] = None,
+        func: str = "median",
+        sampling_method: Optional[str] = None,
     ) -> np.ndarray:
         """Generate probability predictions for new data."""
         if not self.is_fitted:
@@ -304,8 +395,13 @@ class PredictiveModel(BaseModel):
         if outcome not in [None, "home", "away", "draw"]:
             raise ValueError("outcome must be None, 'home', 'away', or 'draw'")
 
-        # Get raw predictions and calculate goal differences
-        predictions = self.predict(data, return_matches=True)
+        if self.predictions is None:
+            # Get raw predictions and calculate goal differences
+            predictions = self.predict(
+                data, return_matches=True, sampling_method=sampling_method, func=func
+            )
+        else:
+            predictions = self.predictions
 
         # If predictions dimension n x 1, assume predictions are already goal differences
         if predictions.shape[0] == 1:
@@ -322,11 +418,11 @@ class PredictiveModel(BaseModel):
 
         # Handle specific outcome requests
         if outcome == "home":
-            return self._format_predictions(data, home_probs)
+            return self._format_predictions(data, home_probs, col_names=["home"])
         elif outcome == "away":
-            return self._format_predictions(data, away_probs)
+            return self._format_predictions(data, away_probs, col_names=["away"])
         elif outcome == "draw":
-            return self._format_predictions(data, draw_probs)
+            return self._format_predictions(data, draw_probs, col_names=["draw"])
 
         # Return both probabilities
         return self._format_predictions(

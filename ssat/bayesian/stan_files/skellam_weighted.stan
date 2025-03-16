@@ -14,7 +14,6 @@ parameters {
   vector[T] attack_raw_team;
   vector[T] defence_raw_team;
   real xi_logit; // Logit-transformed xi parameter
-  real<lower=0, upper=1> zi; // Zero-inflation parameter
 }
 transformed parameters {
   vector[T] attack_team;
@@ -57,31 +56,26 @@ model {
   // Prior on logit-transformed xi
   xi_logit ~ normal(3.5, 1); // Prior centered around xi ≈ 0.97 based on trace plots
 
-  zi ~ beta(2, 18);
-
-  // Weighted
+  // Weighted likelihood with normalized weights
   for (i in 1 : N) {
     target += weights_match[i]
-              * zero_inflated_skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i], zi);
+              * skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i]);
   }
 }
 generated quantities {
-  vector[N] ll_zi_skellam_match;
+  vector[N] ll_skellam_match;
   vector[N] pred_goal_diff_match;
   vector[N] pred_lambda_home_match;
   vector[N] pred_lambda_away_match;
 
   for (i in 1 : N) {
-
-
-    // Log likelihood for zero-inflated Skellam
-    ll_zi_skellam_match[i] = zero_inflated_skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i], zi);
+    // Log likelihood for goal differences
+    ll_skellam_match[i] = skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i]);
 
     // Generate predictions
     pred_lambda_home_match[i] = lambda_home_match[i];
     pred_lambda_away_match[i] = lambda_away_match[i];
-    pred_goal_diff_match[i] = zero_inflated_skellam_rng(lambda_home_match[i],
-                                                        lambda_away_match[i],
-                                                        zi);
+    pred_goal_diff_match[i] = poisson_rng(lambda_home_match[i])
+                              - poisson_rng(lambda_away_match[i]);
   }
 }

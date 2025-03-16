@@ -39,21 +39,59 @@ class BaseModel(ABC):
         self._stan_file = Path("ssat/bayesian/stan_files") / f"{stan_file}.stan"
         if not self._stan_file.exists():
             raise ValueError(f"Stan file not found: {self._stan_file}")
-
+        self.name = self._stan_file.stem
         # Parse Stan file and print data requirements
         self._parse_stan_file()
         self._print_data_requirements()
 
     @abstractmethod
-    def fit(self, data: Union[np.ndarray, pd.DataFrame], **kwargs) -> "BaseModel":
-        """Fit the model using MCMC sampling."""
+    def fit(
+        self,
+        base_data: Union[np.ndarray, pd.DataFrame],
+        model_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
+        **kwargs,
+    ) -> "BaseModel":
+        """Fit the model using MCMC sampling.
+
+        Parameters
+        ----------
+        base_data : Union[np.ndarray, pd.DataFrame]
+            Base data required by all models (e.g., team indices, scores)
+        model_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
+            Additional model-specific data (e.g., weights, covariates)
+        **kwargs : dict
+            Additional keyword arguments for sampling
+
+        Returns:
+        -------
+        BaseModel
+            The fitted model instance
+        """
         pass
 
     @abstractmethod
     def _data_dict(
-        self, data: Union[np.ndarray, pd.DataFrame], fit: bool = True
+        self,
+        base_data: Union[np.ndarray, pd.DataFrame],
+        model_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
+        fit: bool = True,
     ) -> Dict[str, Any]:
-        """Prepare data dictionary for Stan model."""
+        """Prepare data dictionary for Stan model.
+
+        Parameters
+        ----------
+        base_data : Union[np.ndarray, pd.DataFrame]
+            Base data required by all models
+        model_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
+            Additional model-specific data
+        fit : bool, optional
+            Whether this is for fitting (True) or prediction (False)
+
+        Returns:
+        -------
+        Dict[str, Any]
+            Dictionary of data for Stan model
+        """
         pass
 
     @abstractmethod
@@ -108,8 +146,9 @@ class BaseModel(ABC):
             if line and not line.startswith("//"):  # Skip empty lines and comments
                 # Extract type, name, and comment if exists
                 parts = line.split(";")[0].split("//")
+                if "vector" in parts[0]:
+                    parts[0] = parts[0].replace("vector", "float").replace("[N]", " N")
                 declaration = parts[0].strip()
-                comment = parts[1].strip() if len(parts) > 1 else ""
 
                 # Parse array and constraints
                 array_match = re.match(r"array\[([^\]]+)\]", declaration)
@@ -128,6 +167,11 @@ class BaseModel(ABC):
                 parts = clean_decl.split()
                 var_type = parts[0]
                 var_name = parts[-1]
+                comment = (
+                    line.strip().split("//")[-1].strip()
+                    if len(parts) > 1
+                    else parts[1].strip()
+                )
 
                 self._data_vars.append(
                     {
@@ -148,7 +192,14 @@ class BaseModel(ABC):
         index_vars = []
         dimension_vars = []
         data_vars = []
-        weight_vars = []
+        data_vars_prefix = [
+            "home_goals",
+            "away_goals",
+            "goal_diff",
+            "home_team",
+            "away_team",
+        ]
+        model_vars = []
 
         for var in self._data_vars:
             if var["name"].endswith("_idx_match"):
@@ -156,44 +207,40 @@ class BaseModel(ABC):
             elif var["name"] in ["N", "T"]:
                 dimension_vars.append(var)
             elif var["name"].endswith("_match"):
-                if "weights" in var["name"]:
-                    weight_vars.append(var)
-                else:
+                if any(prefix in var["name"] for prefix in data_vars_prefix):
                     data_vars.append(var)
+                else:
+                    model_vars.append(var)
 
-        print("Required columns (in order):")
-        col_idx = 0
+        # Print base data requirements
+        print("Base Data Requirements (required):")
+        print("  These columns must be provided in base_data")
+        base_col_idx = 0
 
-        print("  Index columns (first columns):")
+        print("\n  Index columns (first columns):")
         for var in index_vars:
             name = var["name"].replace("_idx_match", "")
             constraints = var["constraints"] or ""
             desc = var["description"] or f"{name.replace('_', ' ').title()} index"
-            print(f"    {col_idx}. {desc} {constraints}")
-            col_idx += 1
+            print(f"    {base_col_idx}. {desc} {constraints}")
+            base_col_idx += 1
 
         print("\n  Data columns:")
         for var in data_vars:
             name = var["name"].replace("_match", "")
             type_str = "int" if var["type"] == "int" else "float"
             desc = var["description"] or f"{name.replace('_', ' ').title()}"
-            print(f"    {col_idx}. {desc} ({type_str})")
-            col_idx += 1
+            print(f"    {base_col_idx}. {desc} ({type_str})")
+            base_col_idx += 1
 
-        if weight_vars:
-            print("\n  Optional columns:")
-            for var in weight_vars:
+        # Print model-specific data requirements if any
+        if model_vars:
+            print("\nModel-Specific Data Requirements (optional):")
+            print("  These columns can be provided in model_data")
+            model_col_idx = 0
+
+            for var in model_vars:
                 name = var["name"].replace("_match", "")
                 desc = var["description"] or "Sample weights"
-                print(f"    {col_idx}. {desc} (float, optional)")
-                col_idx += 1
-
-        print("\nExample usage:")
-        print("  # Using a DataFrame:")
-        print(
-            "  data = pd.DataFrame(your_data)  # columns must be in order shown above"
-        )
-        print("  model.fit(data)")
-        print("\n  # Using a numpy array:")
-        print("  data = np.array(your_data)  # columns must be in order shown above")
-        print("  model.fit(data)")
+                print(f"    {model_col_idx}. {desc} (float)")
+                model_col_idx += 1

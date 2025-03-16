@@ -1,11 +1,15 @@
 """Bayesian Poisson Model for sports prediction."""
 
-from typing import Optional
+from typing import Optional, Union
 
 import arviz as az
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+from scipy.stats import bernoulli
 
 from ssat.bayesian.base_predictive_model import PredictiveModel, TeamLabeller
+from ssat.stats.skellam_optim import qskellam
 
 
 class Poisson(PredictiveModel):
@@ -132,6 +136,79 @@ class Skellam(Poisson):
         """
         super().__init__(stem=stem)
 
+    def predict(
+        self,
+        data: Union[np.ndarray, pd.DataFrame],
+        return_matches: bool = False,
+        func: str = "mean",
+        sampling_method: str = "qskellam",
+    ) -> np.ndarray:
+        """Generate predictions for new data."""
+        if not self.is_fitted:
+            raise ValueError("Model must be fit before making predictions")
+
+        data_dict = self._data_dict(data, fit=False)
+
+        if self.model is None or self.fit_result is None:
+            raise ValueError("Model not properly initialized")
+
+        # Generate predictions using Stan model
+        preds = self.model.generate_quantities(
+            data=data_dict, previous_fit=self.fit_result
+        )
+        stan_predictions = np.array(
+            [preds.stan_variable(pred_var) for pred_var in self.pred_vars]
+        )
+
+        _, n_sims, n_matches = stan_predictions.shape
+
+        if sampling_method == "qskellam":
+            predictions = qskellam(
+                np.random.uniform(0, 1, size=(n_sims, n_matches)),
+                stan_predictions[1],
+                stan_predictions[2],
+            )
+
+        elif sampling_method == "rskellam":
+            predictions = stan_predictions[0]
+        else:
+            raise ValueError("Only qskellam and rskellam are supported")
+
+        if return_matches:
+            self.predictions = predictions.reshape(1, n_sims, n_matches)
+            return self.predictions
+
+        else:
+            self.predictions = predictions.reshape(1, n_sims, n_matches)
+            return self._format_predictions(
+                data,
+                getattr(np, func)(predictions, axis=0).T,
+                col_names=[self.pred_vars[0]],
+            )
+
+
+class SkellamWeighted(Skellam):
+    """Bayesian Skellam Model for predicting match scores.
+
+    This model uses a Skellam distribution (difference of two Poisson distributions)
+    to directly model the goal difference between teams, accounting for both team
+    attack and defense capabilities.
+    """
+
+    def __init__(
+        self,
+        stem: str = "skellam_weighted",
+    ):
+        """Initialize the Skellam model.
+
+        Parameters
+        ----------
+        stem : str, optional
+            Stem name for the Stan model file.
+            Defaults to "skellam_weighted   ".
+        """
+        super().__init__(stem=stem)
+
 
 class SkellamZero(Poisson):
     """Bayesian Zero-inflated Skellam Model for predicting match scores.
@@ -155,8 +232,61 @@ class SkellamZero(Poisson):
         """
         super().__init__(stem=stem)
 
+    def predict(
+        self,
+        data: Union[np.ndarray, pd.DataFrame],
+        return_matches: bool = False,
+        func: str = "mean",
+        sampling_method: str = "qskellam",
+    ) -> np.ndarray:
+        """Generate predictions for new data."""
+        if not self.is_fitted:
+            raise ValueError("Model must be fit before making predictions")
 
-class SkellamZeroWeighted(Poisson):
+        data_dict = self._data_dict(data, fit=False)
+
+        if self.model is None or self.fit_result is None:
+            raise ValueError("Model not properly initialized")
+
+        # Generate predictions using Stan model
+        preds = self.model.generate_quantities(
+            data=data_dict, previous_fit=self.fit_result
+        )
+        stan_predictions = np.array(
+            [preds.stan_variable(pred_var) for pred_var in self.pred_vars]
+        )
+
+        _, n_sims, n_matches = stan_predictions.shape
+        p = 1 - preds.stan_variable("zi")
+        rvs = bernoulli.rvs(p).reshape(-1, 1)
+
+        if sampling_method == "qskellam":
+            predictions = qskellam(
+                np.random.uniform(0, 1, size=(n_sims, n_matches)),
+                stan_predictions[1],
+                stan_predictions[2],
+            )
+            predictions = predictions * rvs
+        elif sampling_method == "rskellam":
+            predictions = stan_predictions[0]
+            predictions = predictions * rvs
+        else:
+            raise ValueError("Only qskellam and rskellam are supported")
+
+        if return_matches:
+            self.predictions = predictions.reshape(1, n_sims, n_matches)
+            return self.predictions
+
+        else:
+            self.predictions = predictions.reshape(1, n_sims, n_matches)
+            return self._format_predictions(
+                data,
+                getattr(np, func)(predictions, axis=0).T,
+                col_names=[self.pred_vars[0]],
+            )
+
+
+class SkellamZeroWeighted(SkellamZero):
     """Bayesian Zero-inflated Skellam Model for predicting match scores.
 
     This model uses a zero-inflated Skellam distribution to model goal differences,
