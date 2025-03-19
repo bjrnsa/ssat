@@ -23,16 +23,17 @@ class PredictiveModel(BaseModel):
     """Abstract base class for Bayesian predictive models that can predict matches."""
 
     kwargs = {
-        "iter_sampling": 10000,
+        "iter_sampling": 8000,
         "iter_warmup": 2000,
         "chains": 4,
         "seed": 1,
-        # "adapt_delta": 0.95,
-        # "max_treedepth": 12,
-        # "step_size": 0.5,
+        "adapt_delta": 0.95,
+        "max_treedepth": 12,
+        "step_size": 0.5,
         "show_console": False,
         "parallel_chains": 10,
     }
+    predictions: Optional[np.ndarray] = None
 
     def _get_model_inits(self) -> Optional[Dict[str, Any]]:
         """Get model inits for Stan model."""
@@ -53,6 +54,7 @@ class PredictiveModel(BaseModel):
         self,
         base_data: Union[np.ndarray, pd.DataFrame],
         model_data: Optional[Union[np.ndarray, pd.DataFrame]] = None,
+        optional_data: Optional[Union[np.ndarray, pd.DataFrame]] = None,
         **kwargs,
     ) -> "PredictiveModel":
         """Fit the model using MCMC sampling.
@@ -63,6 +65,8 @@ class PredictiveModel(BaseModel):
             Base data required by all models (e.g., team indices, scores)
         model_data : Optional[Union[np.ndarray, pd.DataFrame]], optional
             Additional model-specific data (e.g., weights, covariates)
+        optional_data : Optional[Union[np.ndarray, pd.DataFrame]], optional
+            Optional model-specific data (e.g., weights, covariates)
         **kwargs : dict
             Additional keyword arguments for sampling
 
@@ -72,7 +76,7 @@ class PredictiveModel(BaseModel):
             The fitted model instance
         """
         # Prepare data dictionary
-        data_dict = self._data_dict(base_data, model_data, fit=True)
+        data_dict = self._data_dict(base_data, model_data, optional_data, fit=True)
 
         # Compile model
         model = cmdstanpy.CmdStanModel(stan_file=self._stan_file)
@@ -102,6 +106,7 @@ class PredictiveModel(BaseModel):
         self,
         base_data: Union[np.ndarray, pd.DataFrame],
         model_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
+        optional_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
         fit: bool = True,
     ) -> Dict[str, Any]:
         """Prepare data dictionary for Stan model dynamically based on Stan file requirements.
@@ -112,6 +117,8 @@ class PredictiveModel(BaseModel):
             Base data required by all models (e.g., team indices, scores)
         model_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
             Additional model-specific data (e.g., weights, covariates)
+        optional_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
+            Optional model-specific data (e.g., weights, covariates)
         fit : bool, optional
             Whether this is for fitting (True) or prediction (False)
 
@@ -146,6 +153,14 @@ class PredictiveModel(BaseModel):
                     f"model_data length ({len(model_array)}) must match base_data length ({len(base_array)})"
                 )
 
+        # Convert optional_data to numpy array if provided
+        optional_array = None
+        if optional_data is not None:
+            if isinstance(optional_data, pd.Series):
+                optional_array = optional_data.to_numpy().reshape(-1, 1)
+            elif isinstance(optional_data, pd.DataFrame):
+                optional_array = optional_data.to_numpy()
+
         # Initialize data dictionary with dimensions
         data_dict = {
             "N": len(base_array),
@@ -163,7 +178,7 @@ class PredictiveModel(BaseModel):
             "goal_diff",
         ]
         model_vars = []
-
+        optional_vars = []
         for var in self._data_vars:
             if var["name"].endswith("_idx_match"):
                 index_vars.append(var)
@@ -174,11 +189,13 @@ class PredictiveModel(BaseModel):
                     data_vars.append(var)
                 else:
                     model_vars.append(var)
+            elif var["name"].endswith("_optional"):
+                optional_vars.append(var)
 
         # Track current column index for base_data and model_data
         base_col_idx = 0
         model_col_idx = 0
-
+        optional_col_idx = 0
         # Handle index columns (e.g., team indices)
         if index_vars:
             # Get unique entities and create mapping
@@ -249,15 +266,19 @@ class PredictiveModel(BaseModel):
                     model_array[:, model_col_idx], dtype=model_dtype
                 )
                 model_col_idx += 1
-            else:
-                if model_var_name == "weights_match":
-                    data_dict[model_var_name] = np.ones(
-                        len(base_array), dtype=model_dtype
-                    )
-                else:
-                    data_dict[model_var_name] = np.zeros(
-                        len(base_array), dtype=model_dtype
-                    )
+
+        # Handle optional data columns
+        for var in optional_vars:
+            optional_var_name = var["name"]
+            optional_dtype = var["type"]
+            if (
+                optional_array is not None
+                and optional_col_idx < optional_array.shape[1]
+            ):
+                data_dict[optional_var_name] = np.array(
+                    optional_array[:, optional_col_idx], dtype=optional_dtype
+                )
+                optional_col_idx += 1
 
         return data_dict
 
@@ -364,20 +385,23 @@ class PredictiveModel(BaseModel):
         preds = self.model.generate_quantities(
             data=data_dict, previous_fit=self.fit_result
         )
-        predictions = np.array(
+        stan_predictions = np.array(
             [preds.stan_variable(pred_var) for pred_var in self.pred_vars]
         )
 
+        _, n_sims, n_matches = stan_predictions.shape
+        predictions = stan_predictions[-1]
+
         if return_matches:
-            self.predictions = predictions
-            return predictions
+            self.predictions = predictions.reshape(1, n_sims, n_matches)
+            return self.predictions
 
         else:
-            self.predictions = predictions
+            self.predictions = predictions.reshape(1, n_sims, n_matches)
             return self._format_predictions(
                 data,
-                getattr(np, func)(predictions, axis=1).T,
-                col_names=self.pred_vars,
+                getattr(np, func)(predictions, axis=0).T,
+                col_names=[self.pred_vars[-1]],
             )
 
     def predict_proba(

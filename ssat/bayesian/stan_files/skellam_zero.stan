@@ -5,7 +5,7 @@ data {
   array[N] int<lower=1, upper=T> home_team_idx_match; // Home team index
   array[N] int<lower=1, upper=T> away_team_idx_match; // Away team index
   array[N] int goal_diff_match; // Goal difference
-  vector[N] raw_weights_match; // Raw weights from Python
+  vector[N] raw_weights_optional; // (Optional) weights
 }
 parameters {
   real intercept;
@@ -24,9 +24,9 @@ transformed parameters {
   vector[N] weights_match; // Normalized weights
 
   // Normalize weights to sum to N
-  real sum_weights = sum(raw_weights_match);
+  real sum_weights = sum(raw_weights_optional);
   for (i in 1 : N) {
-    weights_match[i] = raw_weights_match[i] * N / sum_weights;
+    weights_match[i] = raw_weights_optional[i] * N / sum_weights;
   }
 
   attack_team = attack_raw_team - mean(attack_raw_team);
@@ -61,8 +61,6 @@ generated quantities {
   vector[N] pred_lambda_away_match;
 
   for (i in 1 : N) {
-
-
     // Log likelihood for zero-inflated Skellam
     ll_zi_skellam_match[i] = zero_inflated_skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i], zi);
 

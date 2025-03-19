@@ -4,7 +4,8 @@ data {
   int T; // Number of teams
   array[N] int<lower=1, upper=T> home_team_idx_match; // Home team index
   array[N] int<lower=1, upper=T> away_team_idx_match; // Away team index
-  array[N] int goal_diff_match; // Goal difference
+  array[N] int home_goals_match; // Home goals
+  array[N] int away_goals_match; // Away goals
   array[N] int days_since_match; // Days since each match (relative to most recent)
 }
 parameters {
@@ -14,7 +15,6 @@ parameters {
   vector[T] attack_raw_team;
   vector[T] defence_raw_team;
   real xi_logit; // Logit-transformed xi parameter
-  real<lower=0, upper=1> zi; // Zero-inflation parameter
 }
 transformed parameters {
   vector[T] attack_team;
@@ -53,33 +53,31 @@ model {
 
   attack_raw_team ~ normal(0, sigma);
   defence_raw_team ~ normal(0, sigma);
-
   // Prior on logit-transformed xi
   xi_logit ~ normal(3.5, 1); // Prior centered around xi ≈ 0.97 based on trace plots
 
-  zi ~ beta(2, 18);
-
-  // Weighted
   for (i in 1 : N) {
     target += weights_match[i]
-              * zero_inflated_skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i], zi);
+              * (poisson_lpmf(home_goals_match[i] | lambda_home_match[i])
+                 + poisson_lpmf(away_goals_match[i] | lambda_away_match[i]));
   }
 }
 generated quantities {
-  vector[N] ll_zi_skellam_match;
+  vector[N] ll_home_match;
+  vector[N] ll_away_match;
+  vector[N] pred_home_goals_match;
+  vector[N] pred_away_goals_match;
   vector[N] pred_goal_diff_match;
-  vector[N] pred_lambda_home_match;
-  vector[N] pred_lambda_away_match;
 
   for (i in 1 : N) {
-    // Log likelihood for zero-inflated Skellam
-    ll_zi_skellam_match[i] = zero_inflated_skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i], zi);
+    // Log likelihood
+    ll_home_match[i] = poisson_lpmf(home_goals_match[i] | lambda_home_match[i]);
+    ll_away_match[i] = poisson_lpmf(away_goals_match[i] | lambda_away_match[i]);
 
     // Generate predictions
-    pred_lambda_home_match[i] = lambda_home_match[i];
-    pred_lambda_away_match[i] = lambda_away_match[i];
-    pred_goal_diff_match[i] = zero_inflated_skellam_rng(lambda_home_match[i],
-                                                        lambda_away_match[i],
-                                                        zi);
+    pred_home_goals_match[i] = poisson_rng(lambda_home_match[i]);
+    pred_away_goals_match[i] = poisson_rng(lambda_away_match[i]);
+    pred_goal_diff_match[i] = pred_home_goals_match[i]
+                              - pred_away_goals_match[i];
   }
 }

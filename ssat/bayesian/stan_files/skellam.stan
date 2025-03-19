@@ -5,9 +5,8 @@ data {
   array[N] int<lower=1, upper=T> home_team_idx_match; // Home team index
   array[N] int<lower=1, upper=T> away_team_idx_match; // Away team index
   array[N] int goal_diff_match; // Goal difference
-  vector[N] raw_weights_match; // Raw weights from Python
+  vector[N] raw_weights_optional; // (Optional) weights
 }
-
 parameters {
   real intercept;
   real home_advantage;
@@ -15,7 +14,6 @@ parameters {
   vector[T] attack_raw_team;
   vector[T] defence_raw_team;
 }
-
 transformed parameters {
   vector[T] attack_team;
   vector[T] defence_team;
@@ -25,9 +23,9 @@ transformed parameters {
   vector[N] weights_match; // Normalized weights
 
   // Normalize weights to sum to N
-  real sum_weights = sum(raw_weights_match);
+  real sum_weights = sum(raw_weights_optional);
   for (i in 1 : N) {
-    weights_match[i] = raw_weights_match[i] * N / sum_weights;
+    weights_match[i] = raw_weights_optional[i] * N / sum_weights;
   }
 
   attack_team = attack_raw_team - mean(attack_raw_team);
@@ -39,7 +37,6 @@ transformed parameters {
   lambda_away_match = exp(intercept + attack_team[away_team_idx_match]
                           + defence_team[home_team_idx_match]);
 }
-
 model {
   home_advantage ~ normal(0, 1);
   intercept ~ normal(2, 1);
@@ -54,7 +51,6 @@ model {
               * skellam_lpmf(goal_diff_match[i] | lambda_home_match[i], lambda_away_match[i]);
   }
 }
-
 generated quantities {
   vector[N] ll_skellam_match;
   vector[N] pred_goal_diff_match;

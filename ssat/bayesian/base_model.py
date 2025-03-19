@@ -49,6 +49,7 @@ class BaseModel(ABC):
         self,
         base_data: Union[np.ndarray, pd.DataFrame],
         model_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
+        optional_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
         **kwargs,
     ) -> "BaseModel":
         """Fit the model using MCMC sampling.
@@ -59,6 +60,8 @@ class BaseModel(ABC):
             Base data required by all models (e.g., team indices, scores)
         model_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
             Additional model-specific data (e.g., weights, covariates)
+        optional_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
+            Optional model-specific data (e.g., weights, covariates)
         **kwargs : dict
             Additional keyword arguments for sampling
 
@@ -74,6 +77,7 @@ class BaseModel(ABC):
         self,
         base_data: Union[np.ndarray, pd.DataFrame],
         model_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
+        optional_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
         fit: bool = True,
     ) -> Dict[str, Any]:
         """Prepare data dictionary for Stan model.
@@ -84,6 +88,8 @@ class BaseModel(ABC):
             Base data required by all models
         model_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
             Additional model-specific data
+        optional_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
+            Optional model-specific data
         fit : bool, optional
             Whether this is for fitting (True) or prediction (False)
 
@@ -131,6 +137,11 @@ class BaseModel(ABC):
     def _parse_stan_file(self) -> None:
         with open(self._stan_file, "r") as f:
             content = f.read()
+
+        # Find model block
+        model_match = re.search(r"model\s*{([^}]*)}", content, re.DOTALL)
+        if not model_match:
+            raise ValueError(f"No model block found in {self._stan_file}")
 
         # Find data block
         data_match = re.search(r"data\s*{([^}]*)}", content, re.DOTALL)
@@ -183,6 +194,17 @@ class BaseModel(ABC):
                     }
                 )
 
+        # Parse model block
+        model_block = model_match.group(1)
+        self._model_vars = []
+        for line in model_block.strip().split("\n"):
+            line = line.strip()
+            # Line must have ~ in it
+            if "~" in line:
+                # Extract type, name, and comment if exists
+                parts = line.split("~")
+                self._model_vars.append(parts[0].strip())
+
     def _print_data_requirements(self) -> None:
         """Print the data requirements for this model."""
         print(f"\nData requirements for {self._stan_file.name}:")
@@ -200,6 +222,7 @@ class BaseModel(ABC):
             "away_team",
         ]
         model_vars = []
+        optional_vars = []
 
         for var in self._data_vars:
             if var["name"].endswith("_idx_match"):
@@ -211,6 +234,8 @@ class BaseModel(ABC):
                     data_vars.append(var)
                 else:
                     model_vars.append(var)
+            elif var["name"].endswith("_optional"):
+                optional_vars.append(var)
 
         # Print base data requirements
         print("Base Data Requirements (required):")
@@ -235,7 +260,7 @@ class BaseModel(ABC):
 
         # Print model-specific data requirements if any
         if model_vars:
-            print("\nModel-Specific Data Requirements (optional):")
+            print("\nModel-Specific Data Requirements:")
             print("  These columns can be provided in model_data")
             model_col_idx = 0
 
@@ -244,3 +269,15 @@ class BaseModel(ABC):
                 desc = var["description"] or "Sample weights"
                 print(f"    {model_col_idx}. {desc} (float)")
                 model_col_idx += 1
+
+        # Print optional data requirements if any
+        if optional_vars:
+            print("\nOptional Data Requirements:")
+            print("  These columns can be provided in model_data")
+            optional_col_idx = 0
+
+            for var in optional_vars:
+                name = var["name"].replace("_optional", "")
+                desc = var["description"] or f"{name.replace('_', ' ').title()}"
+                print(f"    {optional_col_idx}. {desc} (float)")
+                optional_col_idx += 1

@@ -35,11 +35,7 @@ class Poisson(PredictiveModel):
 
     def plot_trace(
         self,
-        var_names: Optional[list[str]] = [
-            "attack_team",
-            "defence_team",
-            "home_advantage",
-        ],
+        var_names: Optional[list[str]] = None,
     ) -> None:
         """Plot trace of the model.
 
@@ -49,6 +45,9 @@ class Poisson(PredictiveModel):
             List of variable names to plot, by default None
             Keyword arguments passed to arviz.plot_trace
         """
+        if var_names is None:
+            var_names = self._model_vars
+
         az.plot_trace(
             self.inference_data,
             var_names=var_names,
@@ -68,6 +67,28 @@ class Poisson(PredictiveModel):
         ax[0].set_title("Overall Team Strength")
         plt.tight_layout()
         plt.show()
+
+
+class PoissonWeighted(Poisson):
+    """Bayesian Poisson Model for predicting match scores.
+
+    This model uses a Poisson distribution to model goal scoring,
+    accounting for both team attack and defense capabilities.
+    """
+
+    def __init__(
+        self,
+        stem: str = "poisson_weighted",
+    ):
+        """Initialize the Poisson Weighted model.
+
+        Parameters
+        ----------
+        stem : str, optional
+            Stem name for the Stan model file.
+            Defaults to "poisson_weighted".
+        """
+        super().__init__(stem=stem)
 
 
 class NegBinom(Poisson):
@@ -92,8 +113,8 @@ class NegBinom(Poisson):
         super().__init__(stem=stem)
 
 
-class NegBinomZero(Poisson):
-    """Bayesian Negative Binomial Zero-inflated Model for predicting match scores.
+class NegBinomWeighted(Poisson):
+    """Bayesian Negative Binomial Model for predicting match scores.
 
     This model uses a negative binomial distribution to model goal scoring,
     accounting for both team attack and defense capabilities.
@@ -101,15 +122,15 @@ class NegBinomZero(Poisson):
 
     def __init__(
         self,
-        stem: str = "nbinom_zero",
+        stem: str = "nbinom_weighted",
     ):
-        """Initialize the Negative Binomial Zero-inflated model.
+        """Initialize the Negative Binomial Weighted model.
 
         Parameters
         ----------
         stem : str, optional
             Stem name for the Stan model file.
-            Defaults to "nbinom_zero".
+            Defaults to "nbinom_weighted".
         """
         super().__init__(stem=stem)
 
@@ -185,6 +206,29 @@ class Skellam(Poisson):
                 getattr(np, func)(predictions, axis=0).T,
                 col_names=[self.pred_vars[0]],
             )
+
+
+class SkellamDweibull(Skellam):
+    """Bayesian Skellam Model for predicting match scores.
+
+    This model uses a Skellam distribution (difference of two Poisson distributions)
+    to directly model the goal difference between teams, accounting for both team
+    attack and defense capabilities.
+    """
+
+    def __init__(
+        self,
+        stem: str = "skellam_dweibull",
+    ):
+        """Initialize the Skellam model.
+
+        Parameters
+        ----------
+        stem : str, optional
+            Stem name for the Stan model file.
+            Defaults to "skellam_dweibull".
+        """
+        super().__init__(stem=stem)
 
 
 class SkellamWeighted(Skellam):

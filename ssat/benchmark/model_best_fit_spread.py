@@ -1,14 +1,12 @@
 # %%
 import os
 from pathlib import Path
+from typing import Dict, Union
 
-import arviz as az
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from flashscore_scraper.data_loaders import Handball
-from scipy import optimize
-from scipy.stats import skellam as skellam_scipy
 
 from ssat.bayesian.predictive_models import (
     Skellam,
@@ -16,6 +14,7 @@ from ssat.bayesian.predictive_models import (
     SkellamZero,
     SkellamZeroWeighted,
 )
+from ssat.odds.implied import ImpliedOdds
 
 
 def dixon_coles_func(dates, xi=0.0018, base_date=None, output_type="days_since_match"):
@@ -50,8 +49,9 @@ loader_params = {
 df = loader.load_matches(**loader_params).sort_values("datetime")
 df.set_index("flashscore_id", inplace=True)
 
-
-last_train_date = "2024-11-11"
+teams_to_remove = ["Lemvig", "Skive", "Midtjylland"]
+df = df.query("home_team not in @teams_to_remove and away_team not in @teams_to_remove")
+last_train_date = "2025-02-23"
 
 df = df.assign(
     weights=dixon_coles_func(
@@ -67,8 +67,26 @@ df = df.assign(
     ),
     goal_diff_match=df.home_goals - df.away_goals,
 )
+odds_df = loader.load_odds(df.index.tolist())
+odds_df = odds_df.groupby("flashscore_id")[
+    ["home_odds", "draw_odds", "away_odds"]
+].max()
+odds_df = odds_df.rename(
+    columns={
+        "home_odds": "home",
+        "draw_odds": "draw",
+        "away_odds": "away",
+    }
+)
 
-feautres = ["home_team", "away_team", "goal_diff_match"]
+implied = ImpliedOdds(["power"])
+implied_odds = implied.get_implied_probabilities(odds_df)
+implied_odds = implied_odds.pivot_table(
+    index="match_id", columns="outcome", values="power"
+)[["home", "draw", "away"]]
+df = df.join(implied_odds, on="flashscore_id")
+feautres_skellam = ["home_team", "away_team", "goal_diff_match"]
+feautres_poisson = ["home_team", "away_team", "home_goals", "away_goals"]
 train, test = (
     df.query("datetime < @last_train_date"),
     df.query("datetime >= @last_train_date"),
@@ -76,238 +94,129 @@ train, test = (
 
 goals_ = train[["home_goals", "away_goals"]]
 goal_diff_ = train["goal_diff_match"][train["goal_diff_match"].abs() < 30]
+# Remove Lemvig, Skive, Midtjylland
+teams_to_remove = ["Lemvig", "Skive", "Midtjylland"]
+df = df.query("home_team not in @teams_to_remove and away_team not in @teams_to_remove")
 
 
-def skellam_model(params, data):
-    mu1, mu2 = params
-    loss = -np.sum(skellam_scipy.logpmf(data.values, mu1, mu2))
-    return loss
-
-
-def zero_inflated_skellam_model(params, data):
-    mu1, mu2, gamma = params
-
-    # Calculate regular Skellam log-probabilities
-    skellam_logprob = skellam_scipy.logpmf(data.values, mu1, mu2)
-
-    # Apply zero-inflation
-    zero_mask = data.values == 0
-    non_zero_mask = ~zero_mask
-
-    # For zero values: log(gamma + (1-gamma)*p(0))
-    zero_logprob = np.log(gamma + (1 - gamma) * np.exp(skellam_logprob[zero_mask]))
-
-    # For non-zero values: log((1-gamma)*p(y))
-    non_zero_logprob = np.log(1 - gamma) + skellam_logprob[non_zero_mask]
-
-    # Combine log-probabilities
-    total_logprob = np.sum(zero_logprob) + np.sum(non_zero_logprob)
-
-    return -total_logprob
-
-
-# Initial parameters
-params0_skellam = [15, 15]
-params0_zero_inflated = [15, 15, 0.5]
-
-
-# Optimize models
-res = optimize.minimize(skellam_model, params0_skellam, args=(goal_diff_))
-res_zero_inflated = optimize.minimize(
-    zero_inflated_skellam_model,
-    params0_zero_inflated,
-    args=(goal_diff_),
-    bounds=[(0, None), (0, None), (0, 1)],
+feautres = ["home_team", "away_team", "goal_diff_match"]
+covars = ["weights", "home", "away"]
+train, test = (
+    df.query("datetime < @last_train_date"),
+    df.query("datetime >= @last_train_date"),
 )
 
-# Prepare data for plotting
-value_counts = goal_diff_.value_counts(normalize=True).sort_index()
-x_values = np.arange(value_counts.index.min(), value_counts.index.max() + 1)
 
-# Calculate Skellam probabilities
-mu1_skellam, mu2_skellam = res.x
-skellam_probs = skellam_scipy.pmf(x_values, mu1_skellam, mu2_skellam)
-
-# Calculate ZI-Skellam probabilities
-zi_skellam_probs = np.zeros_like(x_values, dtype=float)
-for i, x in enumerate(x_values):
-    if x == 0:
-        zi_skellam_probs[i] = (
-            res_zero_inflated.x[2] + (1 - res_zero_inflated.x[2]) * skellam_probs[i]
-        )
-    else:
-        zi_skellam_probs[i] = (1 - res_zero_inflated.x[2]) * skellam_probs[i]
-
-# Plotting
-plt.figure(figsize=(12, 8))
-
-# Plot empirical distribution
-empirical_values = [value_counts.get(x, 0) for x in x_values]
-plt.bar(
-    x_values, empirical_values, color="black", alpha=0.7, width=0.4, label="Empirical"
-)
-
-# Plot Skellam distribution
-plt.bar(
-    x_values + 0.2, skellam_probs, color="red", alpha=0.7, width=0.2, label="Skellam"
-)
-
-# Plot ZI-Skellam distribution
-plt.bar(
-    x_values + 0.4,
-    zi_skellam_probs,
-    color="green",
-    alpha=0.7,
-    width=0.2,
-    label="ZI-Skellam",
-)
-
-# Set x-axis ticks to show all values
-# plt.xticks(x_values)
-
-# Labels and title
-plt.xlabel("Goal Difference")
-plt.ylabel("Density")
-plt.title("Skellam Fit on Data")
-plt.legend()
-plt.grid(True, alpha=0.3)
-plt.tight_layout()
-plt.show()
+# Remove teams in test that are not present in train
+test = test[test.home_team.isin(train.home_team) & test.away_team.isin(train.away_team)]
+test_odds = odds_df.query("flashscore_id in @test.index")
+test_implied_odds = implied_odds.query("match_id in @test.index")
 
 
-train_outlier_free = train[train["goal_diff_match"].abs() < 15]
-# %%
+predictions = {}
+probas = {}
+
+
 skellam = Skellam()
 skellam.fit(
-    train_outlier_free[feautres],
-    train_outlier_free["weights"],
+    base_data=train[feautres_skellam],
+    optional_data=train["weights"],
     seed=2,
 )
-skellam.plot_trace(
-    var_names=[
-        "intercept",
-        "home_advantage",
-        "attack_team",
-        "defence_team",
-        "tau",
-        "sigma",
-    ]
-)
-skellam.plot_team_stats()
 
 
 skellam_weighted = SkellamWeighted()
-skellam_weighted.fit(
-    train_outlier_free[feautres], train_outlier_free["days_since_match"], seed=3
-)
-skellam_weighted.plot_trace(
-    var_names=[
-        "xi",
-        "xi_logit",
-        "home_advantage",
-        "intercept",
-        "tau",
-        "sigma",
-        "attack_team",
-        "defence_team",
-    ]
-)
-skellam_weighted.plot_team_stats()
+skellam_weighted.fit(train[feautres_skellam], train["days_since_match"], seed=3)
 
 
 skellam_zero = SkellamZero()
 skellam_zero.fit(
-    train_outlier_free[feautres],
-    train_outlier_free["weights"],
+    train[feautres_skellam],
+    train["weights"],
     seed=2,
 )
-skellam_zero.plot_trace(
-    var_names=[
-        "zi",
-        "home_advantage",
-        "intercept",
-        "tau",
-        "sigma",
-        "attack_team",
-        "defence_team",
-    ]
-)
-skellam_zero.plot_team_stats()
 
 
 skellam_zero_weighted = SkellamZeroWeighted()
 skellam_zero_weighted.fit(
-    train_outlier_free[feautres],
-    train_outlier_free["days_since_match"],
+    train[feautres_skellam],
+    train["days_since_match"],
     seed=326,
 )
-skellam_zero_weighted.plot_trace(
-    var_names=[
-        "xi",
-        "xi_logit",
-        "zi",
-        "home_advantage",
-        "intercept",
-        "tau",
-        "sigma",
-        "attack_team",
-        "defence_team",
-    ]
-)
-skellam_zero_weighted.plot_team_stats()
+
 # %%
 
-model_comparison = az.compare(
-    {
-        "skellam": skellam.inference_data,
-        "skellam_weighted": skellam_weighted.inference_data,
-        "skellam_zero": skellam_zero.inference_data,
-        "skellam_zero_weighted": skellam_zero_weighted.inference_data,
-    }
-)
-print(model_comparison)
-# Extract predictions from each model
-pred_goal_diff1 = skellam.predict(
-    train_outlier_free[feautres],
+pred_goal_skellam_dweibull = skellam_dweibull.predict(
+    test[feautres_skellam],
     sampling_method="qskellam",
     func="median",
 )
-pred_goal_diff2 = skellam_weighted.predict(
-    train_outlier_free[feautres],
+pred_goal_skellam = skellam.predict(
+    test[feautres_skellam],
     sampling_method="qskellam",
     func="median",
 )
-pred_goal_diff3 = skellam_zero.predict(
-    train_outlier_free[feautres],
+pred_goal_skellam_weighted = skellam_weighted.predict(
+    test[feautres_skellam],
     sampling_method="qskellam",
     func="median",
 )
-pred_goal_diff4 = skellam_zero_weighted.predict(
-    train_outlier_free[feautres],
+pred_goal_skellam_zero = skellam_zero.predict(
+    test[feautres_skellam],
+    sampling_method="qskellam",
+    func="median",
+)
+pred_goal_skellam_zero_weighted = skellam_zero_weighted.predict(
+    test[feautres_skellam],
     sampling_method="qskellam",
     func="median",
 )
 
-# Get actual goal differences
-actual_goal_diff = np.array(train_outlier_free["goal_diff_match"])
 
+probas = {
+    "skellam_covar": skellam_covar.predict_proba(
+        test[feautres_skellam], sampling_method="qskellam"
+    ),
+    "skellam": skellam.predict_proba(
+        test[feautres_skellam], sampling_method="qskellam"
+    ),
+    # "skellam_weighted": skellam_weighted.predict_proba(
+    #     test[feautres_skellam], sampling_method="qskellam"
+    # ),
+    # "skellam_zero": skellam_zero.predict_proba(
+    #     test[feautres_skellam], sampling_method="qskellam"
+    # ),
+    # "skellam_zero_weighted": skellam_zero_weighted.predict_proba(
+    #     test[feautres_skellam], sampling_method="qskellam"
+    # ),
+}
+
+# %%
 # Create posterior predictive plots
-fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+actual_goal_diff = test["goal_diff_match"]
+fig, axes = plt.subplots(2, 4, figsize=(24, 12))
 axes = axes.flatten()
 
 # Plot histograms for each model
 for ax, pred, title in zip(
     axes,
-    [pred_goal_diff1, pred_goal_diff2, pred_goal_diff3, pred_goal_diff4],
     [
-        "Basic Skellam",
-        "Time-weighted Skellam",
-        "Zero-inflated Skellam",
-        "Zero-inflated Time-weighted",
+        pred_goal_skellam_covar,
+        pred_goal_skellam,
+        pred_goal_skellam_weighted,
+        pred_goal_skellam_zero,
+        pred_goal_skellam_zero_weighted,
+    ],
+    [
+        "Skellam Covar",
+        "Skellam",
+        "Skellam Weighted",
+        "Skellam Zero",
+        "Skellam Zero Weighted",
     ],
 ):
     # Flatten predictions across all samples
-    pred_flat = pred.values.flatten()
+    pred_flat = np.array(pred).flatten()
 
     # Plot histogram of predictions
     ax.hist(
@@ -341,5 +250,117 @@ for ax, pred, title in zip(
 plt.tight_layout()
 plt.show()
 
+
+# %%
+def evaluate_betting_performance(
+    predictions: pd.DataFrame,
+    actuals: Union[pd.DataFrame, pd.Series],
+    bookmaker_odds: pd.DataFrame,
+    stake: float = 1.0,
+    stake_type: str = "fixed",
+    min_ev: float = 0.02,
+    fraction: float = 1.0,
+) -> Dict[str, float]:
+    """Evaluate betting performance based on model probabilities and bookmaker odds."""
+    # Prepare data
+    betting_df = pd.DataFrame(index=predictions.index)
+
+    # Calculate Kelly
+    betting_df["kelly_home"] = (
+        (bookmaker_odds["home"] - 1) * predictions["home"] - (1 - predictions["home"])
+    ) / (bookmaker_odds["home"] - 1)
+    betting_df["kelly_draw"] = (
+        (bookmaker_odds["draw"] - 1) * predictions["draw"] - (1 - predictions["draw"])
+    ) / (bookmaker_odds["draw"] - 1)
+    betting_df["kelly_away"] = (
+        (bookmaker_odds["away"] - 1) * predictions["away"] - (1 - predictions["away"])
+    ) / (bookmaker_odds["away"] - 1)
+
+    # Calculate expected values (EV)
+    betting_df["ev_home"] = (predictions["home"] * bookmaker_odds["home"]) - 1
+    betting_df["ev_draw"] = (predictions["draw"] * bookmaker_odds["draw"]) - 1
+    betting_df["ev_away"] = (predictions["away"] * bookmaker_odds["away"]) - 1
+
+    # Determine which outcome to bet on (highest EV that meets minimum edge)
+    betting_df["bet_home"] = betting_df["ev_home"] > min_ev
+    betting_df["bet_draw"] = betting_df["ev_draw"] > min_ev
+    betting_df["bet_away"] = betting_df["ev_away"] > min_ev
+
+    if stake_type == "fixed":
+        # Determine bet size
+        betting_df["bet_size_home"] = stake * fraction
+        betting_df["bet_size_draw"] = stake * fraction
+        betting_df["bet_size_away"] = stake * fraction
+    elif stake_type == "kelly":
+        # Determine bet size
+        betting_df["bet_size_home"] = betting_df["kelly_home"] * stake * fraction
+        betting_df["bet_size_draw"] = betting_df["kelly_draw"] * stake * fraction
+        betting_df["bet_size_away"] = betting_df["kelly_away"] * stake * fraction
+
+    # Calculate results for each potential bet
+    betting_df["won_home"] = (actuals == 1) & betting_df["bet_home"]
+    betting_df["won_draw"] = (actuals == 0) & betting_df["bet_draw"]
+    betting_df["won_away"] = (actuals == -1) & betting_df["bet_away"]
+
+    # Calculate profits
+    betting_df["profit_home"] = np.where(
+        betting_df["bet_home"],
+        np.where(
+            betting_df["won_home"],
+            betting_df["bet_size_home"] * bookmaker_odds["home"]
+            - betting_df["bet_size_home"],
+            -betting_df["bet_size_home"],
+        ),
+        0,
+    )
+
+    betting_df["profit_draw"] = np.where(
+        betting_df["bet_draw"],
+        np.where(
+            betting_df["won_draw"],
+            betting_df["bet_size_draw"] * bookmaker_odds["draw"]
+            - betting_df["bet_size_draw"],
+            -betting_df["bet_size_draw"],
+        ),
+        0,
+    )
+
+    betting_df["profit_away"] = np.where(
+        betting_df["bet_away"],
+        np.where(
+            betting_df["won_away"],
+            betting_df["bet_size_away"] * bookmaker_odds["away"]
+            - betting_df["bet_size_away"],
+            -betting_df["bet_size_away"],
+        ),
+        0,
+    )
+
+    # Return results
+    return betting_df
+
+
+y_true_outcome = np.sign(test["goal_diff_match"])
+backtests = []
+for model, proba in probas.items():
+    backtest = evaluate_betting_performance(
+        proba,
+        y_true_outcome,
+        test_odds,
+        stake=500,
+        min_ev=0.05,
+        fraction=0.1,
+        stake_type="kelly",
+    )
+    backtest["model"] = model
+    backtest.index = test.home_team + " - " + test.away_team
+    backtests.append(backtest)
+
+
+backtests = pd.concat(backtests, axis=0)
+
+backtests.query("model == 'skellam'")
+backtests.groupby("model").sum().filter(regex="profit").idxmax()
+print(backtests.groupby("model").sum().filter(regex="profit"))
 
 # %%
