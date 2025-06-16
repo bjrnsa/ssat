@@ -168,7 +168,7 @@ model.plot_team_stats()
 
 ## Data Sources
 
-Match data is collected using the [flashscore-scraper](https://github.com/flashscore/flashscore-scraper) package. The package includes sample handball data in `ssat/data/sample_handball_data.pkl` for testing and examples.
+Match data is collected using the [flashscore-scraper](https://github.com/bjrnsa/flashscore-scraper) package. The package includes sample handball data in `ssat/data/sample_handball_data.pkl` for testing and examples.
 
 ## API Documentation
 
