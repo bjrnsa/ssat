@@ -160,6 +160,8 @@ class PredictiveModel(BaseModel):
                 optional_array = optional_data.to_numpy().reshape(-1, 1)
             elif isinstance(optional_data, pd.DataFrame):
                 optional_array = optional_data.to_numpy()
+        else:
+            optional_array = np.ones(len(base_array)).reshape(-1, 1)
 
         # Initialize data dictionary with dimensions
         data_dict = {

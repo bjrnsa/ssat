@@ -1,244 +1,254 @@
 # SSAT: Statistical Sports Analysis Toolkit
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![PyPI](https://img.shields.io/pypi/v/ssat)](https://pypi.org/project/ssat/)
 
-SSAT is a Python package implementing statistical models for sports analytics. The package provides a collection of frequentist and Bayesian statistical models for analyzing and predicting sports match outcomes.
+SSAT is a comprehensive Python package for statistical sports analysis, providing both frequentist and Bayesian statistical models for analyzing and predicting sports match outcomes. The package is particularly focused on handball but can be adapted for other sports.
 
-## Key Features
+## 🚀 Key Features
 
-- **Multiple Statistical Models**:
-  - Frequentist Models:
-    - Bradley-Terry Model: Paired comparison model for team rankings
-    - TOOR (Team Offense-Offense Rating): Offensive performance analysis
-    - GSSD (Goal Scoring Statistical Distribution): Goal distribution modeling
-    - ZSD (Zero-Score Distribution): Special case handling for 0-0 outcomes
-    - PRP (Possession-based Rating Process): Team rating based on possession metrics
-    - Poisson Model: Classic goal-scoring probability distribution
-  - Bayesian Models:
-    - Bayesian Poisson: Probabilistic goal-scoring model with team attack/defense capabilities
-    - Negative Binomial: Overdispersed goal-scoring model for higher variance
-    - Zero-Inflated Negative Binomial: Handles excess zeros in low-scoring matches
-    - Skellam: Direct modeling of goal differences
-    - Zero-Inflated Skellam: Enhanced modeling of draws and low-scoring games
+### Statistical Models
+- **Frequentist Models**: Bradley-Terry, GSSD, TOOR, ZSD, PRP, Poisson
+- **Bayesian Models**: Poisson, Negative Binomial, Skellam variants with MCMC sampling
+- **Model Comparison**: Built-in tools for comparing predictions across different approaches
 
-- **Data Processing**: Integrated with flashscore-scraper for automated data collection
-- **Visualization**: Comprehensive plotting utilities for model analysis
-- **Model Comparison**: Tools for comparing predictions across different models
+### Analysis Capabilities
+- **Team Ratings**: Detailed offensive/defensive capabilities analysis
+- **Match Prediction**: Win/Draw/Loss probabilities with uncertainty quantification
+- **Performance Evaluation**: Comprehensive model benchmarking and validation
+- **Visualization**: Rich plotting utilities for model diagnostics and team analysis
 
-## Installation
+### Data Integration
+- **Sample Data**: Included handball datasets for immediate experimentation
+- **Flexible Input**: Support for various data formats and structures
+- **Extensible**: Easy integration with external data sources
 
+## 📦 Installation
+
+### Basic Installation
 ```bash
 pip install ssat
 ```
 
-For full functionality including all optional dependencies:
+### Full Installation (Recommended)
 ```bash
 pip install ssat[all]
 ```
 
-### Dependencies
+### Optional Dependencies
+```bash
+# Development and notebooks
+pip install ssat[dev]
 
-- Core: numpy, pandas, scipy
-- Optional:
-  - Development: ipykernel, ipywidgets, jupyter
-  - Visualization: matplotlib, seaborn
-  - Data Collection: flashscore-scraper, requests, beautifulsoup4
-  - Machine Learning: scikit-learn, statsmodels
-  - Bayesian (planned): arviz, cmdstanpy
+# Data collection tools
+pip install ssat[data]
 
-## Quick Start
+# Machine learning extensions
+pip install ssat[ml]
+```
 
+## 🏃‍♂️ Quick Start
+
+### Frequentist Models Example
 ```python
 import pandas as pd
-from ssat.frequentist import BradleyTerry, Poisson
+from ssat.frequentist import BradleyTerry, GSSD
 
-# Load data
-df = pd.read_pickle("ssat/data/sample_handball_data.pkl")
-X = df[["home_team", "away_team"]]
-Z = df[["home_goals", "away_goals"]]
-y = df["spread"]
+# Load sample data
+match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
 
-# Initialize and fit models
-bt_model = BradleyTerry()
-poisson_model = Poisson()
+# Prepare data
+X = match_df[["home_team", "away_team"]]
+y = match_df["home_goals"] - match_df["away_goals"]  # spread
+Z = match_df[["home_goals", "away_goals"]]
+
+# Train-test split
+train_size = int(len(match_df) * 0.8)
+X_train, X_test = X[:train_size], X[train_size:]
+y_train, y_test = y[:train_size], y[train_size:]
+Z_train, Z_test = Z[:train_size], Z[train_size:]
 
 # Fit models
-bt_model.fit(X, y, Z)
-poisson_model.fit(X, y, Z)
+bt_model = BradleyTerry()
+bt_model.fit(X_train, y_train, Z_train)
+
+gssd_model = GSSD()
+gssd_model.fit(X_train, y_train, Z_train)
 
 # Make predictions
-bt_predictions = bt_model.predict(X)
-poisson_predictions = poisson_model.predict(X)
+bt_preds = bt_model.predict(X_test)
+bt_probas = bt_model.predict_proba(X_test, point_spread=0, include_draw=True)
 
-# Predict probabilities
-bt_probas = bt_model.predict_proba(X, Z, point_spread=0, include_draw=True)
-poisson_probas = poisson_model.predict_proba(X, Z, point_spread=0, include_draw=True)
+# Get team ratings
+team_ratings = bt_model.get_team_ratings()
+print(team_ratings.head())
 ```
 
-## Bayesian Models
-
-SSAT's Bayesian models provide probabilistic predictions with uncertainty quantification. These models use MCMC sampling via Stan to estimate team strengths and predict match outcomes.
-
-### Available Models
-
-1. **Bayesian Poisson**
-   ```python
-   from ssat.bayesian import Poisson
-
-   model = Poisson()
-   model.fit(X)  # X contains [home_team, away_team, home_goals, away_goals]
-
-   # Make predictions
-   predictions = model.predict(new_matches)
-   probabilities = model.predict_proba(new_matches, point_spread=0)
-
-   # Visualize team strengths
-   model.plot_team_stats()
-   ```
-
-2. **Negative Binomial**
-   ```python
-   from ssat.bayesian import NegBinom
-
-   model = NegBinom()
-   model.fit(X)
-   ```
-   Better suited for matches with higher scoring variance.
-
-3. **Zero-Inflated Models**
-   ```python
-   from ssat.bayesian import NegBinomZero, SkellamZero
-
-   model = NegBinomZero()  # or SkellamZero()
-   model.fit(X)
-   ```
-   Specifically designed for competitions with frequent low scores or draws.
-
-### Model Features
-
-- **Uncertainty Quantification**: All predictions include credible intervals
-- **Team Statistics**: Analyze attack and defense capabilities per team
-- **Visualization Tools**:
-  ```python
-  # View MCMC diagnostics
-  model.plot_trace()
-
-  # Analyze team strengths
-  model.plot_team_stats()
-  ```
-- **Flexible Predictions**:
-  - Win/Draw/Loss probabilities
-  - Expected goals
-  - Custom point spread predictions
-
-### Example Usage
-
+### Bayesian Models Example
 ```python
-import pandas as pd
-from ssat.bayesian import Poisson
+from ssat.bayesian import Poisson, Skellam
 
-# Load match data
-matches = pd.DataFrame({
-    'home_team': ['TeamA', 'TeamB', ...],
-    'away_team': ['TeamB', 'TeamC', ...],
-    'home_goals': [2, 1, ...],
-    'away_goals': [1, 2, ...]
-})
+# Prepare data for Bayesian models
+poisson_data = match_df[["home_team", "away_team", "home_goals", "away_goals"]]
+skellam_data = match_df[["home_team", "away_team", "home_goals", "away_goals"]]
+skellam_data["goal_diff"] = skellam_data["home_goals"] - skellam_data["away_goals"]
 
-# Initialize and fit model
-model = Poisson()
-model.fit(matches)
+# Fit Bayesian models
+poisson_model = Poisson()
+poisson_model.fit(poisson_data, seed=42)
 
-# Predict new matches
+skellam_model = Skellam()
+skellam_model.fit(skellam_data[["home_team", "away_team", "goal_diff"]], seed=42)
+
+# Visualize model diagnostics
+poisson_model.plot_trace()
+poisson_model.plot_team_stats()
+
+# Make predictions on new matches
 new_matches = pd.DataFrame({
-    'home_team': ['TeamA'],
-    'away_team': ['TeamC']
+    "home_team": ["Aalborg", "GOG"],
+    "away_team": ["Skjern", "Kolding"]
 })
 
-# Get win probabilities
-probs = model.predict_proba(new_matches)
-print(f"Win probability: {probs[0]:.2%}")
-
-# Analyze team strengths
-model.plot_team_stats()
+poisson_preds = poisson_model.predict(new_matches)
+poisson_probas = poisson_model.predict_proba(new_matches)
 ```
 
-## Data Sources
+## 📊 Model Overview
 
-Match data is collected using the [flashscore-scraper](https://github.com/flashscore/flashscore-scraper) package. The package includes sample handball data in `ssat/data/sample_handball_data.pkl` for testing and examples.
+### Frequentist Models
 
-## API Documentation
+| Model | Description | Best For |
+|-------|-------------|----------|
+| **Bradley-Terry** | Paired comparison with logistic regression | Team rankings, simple win probabilities |
+| **GSSD** | Linear regression with offensive/defensive stats | Detailed team performance analysis |
+| **TOOR** | Team offense-offense rating | Offensive performance comparison |
+| **ZSD** | Zero-score distribution modeling | Low-scoring sports analysis |
+| **PRP** | Possession-based rating process | Possession-heavy sports |
+| **Poisson** | Goal-scoring as Poisson process | Classic sports modeling |
 
-### Base Model
-All models inherit from `BaseModel` providing common functionality:
-- `fit(X, y, Z)`: Fit the model to training data
-- `predict(X)`: Predict match outcomes
-- `predict_proba(X, Z, point_spread, include_draw)`: Predict outcome probabilities
+### Bayesian Models
 
-### Specific Models
+| Model | Description | Best For |
+|-------|-------------|----------|
+| **Poisson** | Bayesian goal-scoring with MCMC | Uncertainty quantification in predictions |
+| **NegBinom** | Overdispersed goal modeling | High-variance scoring patterns |
+| **Skellam** | Direct goal difference modeling | Spread betting, draw analysis |
+| **SkellamZero** | Zero-inflated Skellam | Sports with frequent draws |
+| **Weighted variants** | Time-weighted model fitting | Recent performance emphasis |
 
-#### Bradley-Terry Model
+## 📈 Example Notebooks
+
+The package includes comprehensive example notebooks:
+
+- `frequentist_example.py`: Complete frequentist model comparison with train-test evaluation
+- `bayesian_example.py`: Bayesian model usage with MCMC diagnostics and visualization
+
+Both examples use real handball data and demonstrate:
+- Proper train-test splitting
+- Model performance evaluation
+- Prediction comparison and visualization
+- Team strength analysis
+
+## 🔧 Advanced Usage
+
+### Model Benchmarking
 ```python
-from ssat.frequentist import BradleyTerry
+from ssat.benchmark import model_benchmark
+from sklearn.metrics import mean_absolute_error
 
-model = BradleyTerry()
-model.fit(X, y, Z)
+# Compare multiple models
+models = [BradleyTerry(), GSSD()]
+results = {}
+
+for model in models:
+    model.fit(X_train, y_train, Z_train)
+    preds = model.predict(X_test)
+    results[model.NAME] = mean_absolute_error(y_test, preds)
+
+print("Model Performance (MAE):")
+for model_name, mae in results.items():
+    print(f"{model_name}: {mae:.3f}")
 ```
-Implements paired comparison modeling for team strength estimation.
 
-#### Poisson Model
+### Custom Team Analysis
 ```python
-from ssat.frequentist import Poisson
+# Detailed team strength analysis
+team_stats = gssd_model.get_team_ratings()
+print("Team Offensive/Defensive Breakdown:")
+print(team_stats[['pfh', 'pah', 'pfa', 'paa']].head())
 
-model = Poisson()
-model.fit(X, y, Z)
+# Model coefficients
+coeffs = team_stats.loc['Coefficients']
+print(f"Home offense coefficient: {coeffs['pfh']:.3f}")
+print(f"Home defense coefficient: {coeffs['pah']:.3f}")
 ```
-Models goal-scoring as a Poisson process.
 
-[Additional model documentation available in the wiki]
+## 📊 Data Format
 
-## Development Roadmap
+SSAT expects data in the following format:
 
-1. **Current Release (v0.0.1)**:
-   - Frequentist models implementation
-   - Basic data processing utilities
-   - Example notebooks
+```python
+# Required columns for match data
+match_data = pd.DataFrame({
+    'home_team': ['Team A', 'Team B', ...],
+    'away_team': ['Team B', 'Team C', ...],
+    'home_goals': [25, 30, ...],
+    'away_goals': [23, 28, ...],
+    'datetime': ['2024-01-01', '2024-01-02', ...]  # for time-based analysis
+})
+```
 
-2. **Upcoming Features**:
-   - Bayesian implementations using Stan
-   - Enhanced visualization tools
-   - Additional sport-specific models
-   - Performance optimization
+## 🛠️ Development
 
-3. **Future Plans**:
-   - Real-time prediction updates
-   - Web API integration
-   - Additional sports support
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-### Development Setup
-
+### Setup Development Environment
 ```bash
 git clone https://github.com/bjrnsa/ssat.git
 cd ssat
 pip install -e ".[all]"
 ```
 
-## License
+### Run Examples
+```bash
+# Frequentist models example
+python ssat/notebooks/frequentist_example.py
+
+# Bayesian models example
+python ssat/notebooks/bayesian_example.py
+```
+
+### Testing
+```bash
+# Run basic functionality tests
+python -c "import ssat; print('Import successful')"
+```
+
+## 📝 Dependencies
+
+### Core Dependencies
+- **arviz**: Bayesian model diagnostics
+- **cmdstanpy**: Stan interface for MCMC sampling
+- **matplotlib**: Plotting and visualization
+- **numpy**: Numerical computing
+- **pandas**: Data manipulation
+- **pyarrow**: Efficient data storage
+- **scipy**: Statistical functions
+- **seaborn**: Statistical visualization
+
+### Optional Dependencies
+- **scikit-learn**: Machine learning utilities
+- **jupyter**: Interactive notebooks
+- **flashscore-scraper**: Sports data collection
+
+
+
+## 📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## Citation
+## 📚 Citation
 
 If you use SSAT in your research, please cite:
 
@@ -246,13 +256,15 @@ If you use SSAT in your research, please cite:
 @software{ssat2025,
   author = {Aagaard, Bjørn},
   title = {SSAT: Statistical Sports Analysis Toolkit},
+  version = {0.0.3},
   year = {2025},
   publisher = {GitHub},
   url = {https://github.com/bjrnsa/ssat}
 }
 ```
 
-## Acknowledgments
+## 🙏 Acknowledgments
 
-- Andrew Mack's "Statistical Sports Models in Excel" (ISBN: 978-1079013450)
-- Contributors and maintainers of dependent packages
+- Statistical modeling concepts from Andrew Mack's "Statistical Sports Models in Excel"
+- The Stan development team for excellent MCMC tools
+- The scientific Python ecosystem contributors

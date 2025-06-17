@@ -1,6 +1,6 @@
 [project]
 name = "ssat"
-version = "0.0.2"
+version = "0.0.3"
 description = "SSAT: Statistical Sports Analysis Toolkit"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -10,14 +10,14 @@ authors = [{ name = "Bjørn Aagaard", email = "aagaardbs@gmail.com" }]
 
 # Core dependencies required for basic functionality
 dependencies = [
-    "cmdstanpy>=1.2.5",
-    "numpy>=2.1.3",
-    "pandas>=2.2.3",
-    "scipy>=1.15.1",
     "arviz>=0.20.0",
     "cmdstanpy>=1.2.5",
-    "seaborn>=0.13.2",
     "matplotlib>=3.10.1",
+    "numpy>=2.1.3",
+    "pandas>=2.2.3",
+    "pyarrow>=20.0.0",
+    "scipy>=1.15.1",
+    "seaborn>=0.13.2",
 ]
 
 [project.optional-dependencies]
@@ -26,32 +26,29 @@ dev = [
     "ipykernel>=6.29.5",
     "ipywidgets>=8.1.5",
     "jupyter>=1.1.1",
-    "matplotlib>=3.10.1",
 ]
-
 
 # Data acquisition and processing
 data = [
+    "beautifulsoup4>=4.12.0",
     "flashscore-scraper>=0.0.5",
     "requests>=2.31.0",
-    "beautifulsoup4>=4.12.0",
 ]
 
 # Machine learning and statistical modeling
-ml = ["scikit-learn>=1.6.1", "statsmodels>=0.14.4"]
+ml = [
+    "scikit-learn>=1.6.1", 
+    "statsmodels>=0.14.4",
+]
 
 # All optional dependencies
 all = [
+    "beautifulsoup4>=4.12.0",
+    "flashscore-scraper>=0.0.5",
     "ipykernel>=6.29.5",
     "ipywidgets>=8.1.5",
     "jupyter>=1.1.1",
-    "matplotlib>=3.10.1",
-    "arviz>=0.20.0",
-    "cmdstanpy>=1.2.5",
-    "seaborn>=0.13.2",
-    "flashscore-scraper>=0.0.5",
     "requests>=2.31.0",
-    "beautifulsoup4>=4.12.0",
     "scikit-learn>=1.6.1",
     "statsmodels>=0.14.4",
 ]
@@ -68,7 +65,7 @@ build-backend = "hatchling.build"
 
 [tool.ruff]
 line-length = 88
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 select = [
