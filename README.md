@@ -10,17 +10,20 @@ SSAT is a comprehensive Python package for statistical sports analysis, providin
 ## 🚀 Key Features
 
 ### Statistical Models
+
 - **Frequentist Models**: Bradley-Terry, GSSD, TOOR, ZSD, PRP, Poisson
 - **Bayesian Models**: Poisson, Negative Binomial, Skellam variants with MCMC sampling
 - **Model Comparison**: Built-in tools for comparing predictions across different approaches
 
 ### Analysis Capabilities
+
 - **Team Ratings**: Detailed offensive/defensive capabilities analysis
 - **Match Prediction**: Win/Draw/Loss probabilities with uncertainty quantification
 - **Performance Evaluation**: Comprehensive model benchmarking and validation
 - **Visualization**: Rich plotting utilities for model diagnostics and team analysis
 
 ### Data Integration
+
 - **Sample Data**: Included handball datasets for immediate experimentation
 - **Flexible Input**: Support for various data formats and structures
 - **Extensible**: Easy integration with external data sources
@@ -28,16 +31,23 @@ SSAT is a comprehensive Python package for statistical sports analysis, providin
 ## 📦 Installation
 
 ### Basic Installation
+
 ```bash
 pip install ssat
 ```
 
 ### Full Installation (Recommended)
+
 ```bash
 pip install ssat[all]
 ```
 
+### `cmdStan` Intallation
+
+To use the Bayesian models you will need to install `cmdStan` as described in the [`cmdStan` Installation Guide](https://mc-stan.org/cmdstanpy/installation.html#cmdstan-installation).
+
 ### Optional Dependencies
+
 ```bash
 # Development and notebooks
 pip install ssat[dev]
@@ -52,6 +62,7 @@ pip install ssat[ml]
 ## 🏃‍♂️ Quick Start
 
 ### Frequentist Models Example
+
 ```python
 import pandas as pd
 from ssat.frequentist import BradleyTerry, GSSD
@@ -87,8 +98,13 @@ print(team_ratings.head())
 ```
 
 ### Bayesian Models Example
+
 ```python
+import pandas as pd
 from ssat.bayesian import Poisson, Skellam
+
+# Load sample data
+match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
 
 # Prepare data for Bayesian models
 poisson_data = match_df[["home_team", "away_team", "home_goals", "away_goals"]]
@@ -155,9 +171,25 @@ Both examples use real handball data and demonstrate:
 ## 🔧 Advanced Usage
 
 ### Model Benchmarking
+
 ```python
-from ssat.benchmark import model_benchmark
 from sklearn.metrics import mean_absolute_error
+import pandas as pd
+from ssat.frequentist import BradleyTerry, GSSD
+
+# Load sample data
+match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
+
+# Prepare data
+X = match_df[["home_team", "away_team"]]
+y = match_df["home_goals"] - match_df["away_goals"]  # spread
+Z = match_df[["home_goals", "away_goals"]]
+
+# Train-test split
+train_size = int(len(match_df) * 0.8)
+X_train, X_test = X[:train_size], X[train_size:]
+y_train, y_test = y[:train_size], y[train_size:]
+Z_train, Z_test = Z[:train_size], Z[train_size:]
 
 # Compare multiple models
 models = [BradleyTerry(), GSSD()]
@@ -174,7 +206,30 @@ for model_name, mae in results.items():
 ```
 
 ### Custom Team Analysis
+
 ```python
+from sklearn.metrics import mean_absolute_error
+import pandas as pd
+from ssat.frequentist import BradleyTerry, GSSD
+
+# Load sample data
+match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
+
+# Prepare data
+X = match_df[["home_team", "away_team"]]
+y = match_df["home_goals"] - match_df["away_goals"]  # spread
+Z = match_df[["home_goals", "away_goals"]]
+
+# Train-test split
+train_size = int(len(match_df) * 0.8)
+X_train, X_test = X[:train_size], X[train_size:]
+y_train, y_test = y[:train_size], y[train_size:]
+Z_train, Z_test = Z[:train_size], Z[train_size:]
+
+# Fit Model
+gssd_model = GSSD()
+gssd_model.fit(X_train, y_train, Z_train)
+
 # Detailed team strength analysis
 team_stats = gssd_model.get_team_ratings()
 print("Team Offensive/Defensive Breakdown:")
@@ -204,6 +259,7 @@ match_data = pd.DataFrame({
 ## 🛠️ Development
 
 ### Setup Development Environment
+
 ```bash
 git clone https://github.com/bjrnsa/ssat.git
 cd ssat
@@ -211,6 +267,7 @@ pip install -e ".[all]"
 ```
 
 ### Run Examples
+
 ```bash
 # Frequentist models example
 python ssat/notebooks/frequentist_example.py
@@ -220,6 +277,7 @@ python ssat/notebooks/bayesian_example.py
 ```
 
 ### Testing
+
 ```bash
 # Run basic functionality tests
 python -c "import ssat; print('Import successful')"
@@ -228,6 +286,7 @@ python -c "import ssat; print('Import successful')"
 ## 📝 Dependencies
 
 ### Core Dependencies
+
 - **arviz**: Bayesian model diagnostics
 - **cmdstanpy**: Stan interface for MCMC sampling
 - **matplotlib**: Plotting and visualization
@@ -238,11 +297,10 @@ python -c "import ssat; print('Import successful')"
 - **seaborn**: Statistical visualization
 
 ### Optional Dependencies
+
 - **scikit-learn**: Machine learning utilities
 - **jupyter**: Interactive notebooks
 - **flashscore-scraper**: Sports data collection
-
-
 
 ## 📄 License
 
