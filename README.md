@@ -65,10 +65,11 @@ pip install ssat[ml]
 
 ```python
 import pandas as pd
+from ssat.data import get_sample_handball_match_data
 from ssat.frequentist import BradleyTerry, GSSD
 
 # Load sample data
-match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
+match_df = get_sample_handball_match_data()
 
 # Prepare data
 X = match_df[["home_team", "away_team"]]
@@ -101,10 +102,11 @@ print(team_ratings.head())
 
 ```python
 import pandas as pd
+from ssat.data import get_sample_handball_match_data
 from ssat.bayesian import Poisson, Skellam
 
 # Load sample data
-match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
+match_df = get_sample_handball_match_data()
 
 # Prepare data for Bayesian models
 poisson_data = match_df[["home_team", "away_team", "home_goals", "away_goals"]]
@@ -157,12 +159,13 @@ poisson_probas = poisson_model.predict_proba(new_matches)
 
 ## 📈 Example Notebooks
 
-The package includes comprehensive example notebooks:
+The repository contains comprehensive example notebooks:
 
-- `frequentist_example.py`: Complete frequentist model comparison with train-test evaluation
-- `bayesian_example.py`: Bayesian model usage with MCMC diagnostics and visualization
+- [`frequentist_example.ipynb`](ssat/notebooks/frequentist_example.ipynb): Complete frequentist model comparison with train-test evaluation
+- [`bayesian_example.ipynb`](ssat/notebooks/bayesian_example.ipynb): Bayesian model usage with MCMC diagnostics and visualization
 
 Both examples use real handball data and demonstrate:
+
 - Proper train-test splitting
 - Model performance evaluation
 - Prediction comparison and visualization
@@ -175,10 +178,11 @@ Both examples use real handball data and demonstrate:
 ```python
 from sklearn.metrics import mean_absolute_error
 import pandas as pd
+from ssat.data import get_sample_handball_match_data
 from ssat.frequentist import BradleyTerry, GSSD
 
 # Load sample data
-match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
+match_df = get_sample_handball_match_data()
 
 # Prepare data
 X = match_df[["home_team", "away_team"]]
@@ -210,10 +214,11 @@ for model_name, mae in results.items():
 ```python
 from sklearn.metrics import mean_absolute_error
 import pandas as pd
+from ssat.data import get_sample_handball_match_data
 from ssat.frequentist import BradleyTerry, GSSD
 
 # Load sample data
-match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
+match_df = get_sample_handball_match_data()
 
 # Prepare data
 X = match_df[["home_team", "away_team"]]
@@ -263,6 +268,7 @@ match_data = pd.DataFrame({
 ```bash
 git clone https://github.com/bjrnsa/ssat.git
 cd ssat
+# Create and activate your virtual environment
 pip install -e ".[all]"
 ```
 

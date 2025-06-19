@@ -1,0 +1,1 @@
+recursive-include ssat/data *.parquet
