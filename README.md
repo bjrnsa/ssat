@@ -28,36 +28,23 @@ SSAT is a comprehensive Python package for statistical sports analysis, providin
 - **Flexible Input**: Support for various data formats and structures
 - **Extensible**: Easy integration with external data sources
 
+## ✅ To-Do
+
+- ### Streamlined fit and predic for both types of models
+
+- ### Write documentation to show features like adding weights
+
 ## 📦 Installation
 
-### Basic Installation
+### Installation
 
 ```bash
 pip install ssat
 ```
 
-### Full Installation (Recommended)
-
-```bash
-pip install ssat[all]
-```
-
 ### `cmdStan` Intallation
 
 To use the Bayesian models you will need to install `cmdStan` as described in the [`cmdStan` Installation Guide](https://mc-stan.org/cmdstanpy/installation.html#cmdstan-installation).
-
-### Optional Dependencies
-
-```bash
-# Development and notebooks
-pip install ssat[dev]
-
-# Data collection tools
-pip install ssat[data]
-
-# Machine learning extensions
-pip install ssat[ml]
-```
 
 ## 🏃‍♂️ Quick Start
 
@@ -66,10 +53,13 @@ pip install ssat[ml]
 ```python
 import pandas as pd
 from ssat.data import get_sample_handball_match_data
-from ssat.frequentist import BradleyTerry, GSSD
+from ssat.frequentist import GSSD, BradleyTerry
 
 # Load sample data
-match_df = get_sample_handball_match_data()
+df = get_sample_handball_match_data()
+league = "Starligue"
+season = 2024
+match_df = df.loc[(df["league"] == league) & (df["season"] == season)]
 
 # Prepare data
 X = match_df[["home_team", "away_team"]]
@@ -90,72 +80,101 @@ gssd_model = GSSD()
 gssd_model.fit(X_train, y_train, Z_train)
 
 # Make predictions
-bt_preds = bt_model.predict(X_test)
+test_fixtures = X_test.apply(lambda x: f"{x.home_team}-{x.away_team}", axis=1)
+
 bt_probas = bt_model.predict_proba(X_test, point_spread=0, include_draw=True)
+gssd_probas = gssd_model.predict_proba(X_test, point_spread=0, include_draw=True)
+
+bt_probas_df = pd.DataFrame(
+    bt_probas, columns=["Home", "Draw", "Away"], index=test_fixtures
+)
+gssd_probas_df = pd.DataFrame(
+    gssd_probas, columns=["Home", "Draw", "Away"], index=test_fixtures
+)
+print(bt_probas_df.head())
+print(gssd_probas_df.head())
 
 # Get team ratings
-team_ratings = bt_model.get_team_ratings()
-print(team_ratings.head())
+bt_team_ratings = bt_model.get_team_ratings()
+print(bt_team_ratings.head())
+
+gssd_team_ratings = gssd_model.get_team_ratings()
+print(gssd_team_ratings.head())
 ```
 
 ### Bayesian Models Example
 
 ```python
 import pandas as pd
-from ssat.data import get_sample_handball_match_data
 from ssat.bayesian import Poisson, Skellam
+from ssat.data import get_sample_handball_match_data
 
 # Load sample data
-match_df = get_sample_handball_match_data()
+df = get_sample_handball_match_data()
+league = "Starligue"
+season = 2024
+match_df = df.loc[(df["league"] == league) & (df["season"] == season)]
 
-# Prepare data for Bayesian models
-poisson_data = match_df[["home_team", "away_team", "home_goals", "away_goals"]]
-skellam_data = match_df[["home_team", "away_team", "home_goals", "away_goals"]]
-skellam_data["goal_diff"] = skellam_data["home_goals"] - skellam_data["away_goals"]
+# Prepare data
+X = match_df[["home_team", "away_team", "home_goals", "away_goals"]]
+X = X.assign(goal_diff=X["home_goals"] - X["away_goals"])
+
+# Train-test split
+train_size = int(len(match_df) * 0.8)
+X_train, X_test = X[:train_size], X[train_size:]
 
 # Fit Bayesian models
 poisson_model = Poisson()
-poisson_model.fit(poisson_data, seed=42)
+poisson_model.fit(X_train, seed=42)
 
 skellam_model = Skellam()
-skellam_model.fit(skellam_data[["home_team", "away_team", "goal_diff"]], seed=42)
+skellam_model.fit(X_train[["home_team", "away_team", "goal_diff"]], seed=42)
 
 # Visualize model diagnostics
 poisson_model.plot_trace()
 poisson_model.plot_team_stats()
 
-# Make predictions on new matches
-new_matches = pd.DataFrame({
-    "home_team": ["Aalborg", "GOG"],
-    "away_team": ["Skjern", "Kolding"]
-})
+skellam_model.plot_trace()
+skellam_model.plot_team_stats()
 
-poisson_preds = poisson_model.predict(new_matches)
-poisson_probas = poisson_model.predict_proba(new_matches)
+# Make predictions on new matches
+test_fixtures = X_test.apply(lambda x: f"{x.home_team}-{x.away_team}", axis=1)
+
+poisson_preds = poisson_model.predict(X_test)
+poisson_probas = poisson_model.predict_proba(X_test)
+poisson_probas.index = test_fixtures
+
+skellam_preds = skellam_model.predict(X_test)
+skellam_probas = skellam_model.predict_proba(X_test)
+skellam_probas.index = test_fixtures
+
+# Print results - notice how the Skellam assign a higher probability to draws
+print(poisson_probas.head())
+print(skellam_probas.head())
 ```
 
 ## 📊 Model Overview
 
 ### Frequentist Models
 
-| Model | Description | Best For |
-|-------|-------------|----------|
-| **Bradley-Terry** | Paired comparison with logistic regression | Team rankings, simple win probabilities |
-| **GSSD** | Linear regression with offensive/defensive stats | Detailed team performance analysis |
-| **TOOR** | Team offense-offense rating | Offensive performance comparison |
-| **ZSD** | Zero-score distribution modeling | Low-scoring sports analysis |
-| **PRP** | Possession-based rating process | Possession-heavy sports |
-| **Poisson** | Goal-scoring as Poisson process | Classic sports modeling |
+| Model | Description |
+|-------|-------------|
+| **Bradley-Terry** | Paired comparison with logistic regression |
+| **GSSD** | Linear regression with offensive/defensive stats |
+| **TOOR** | Team offense-offense rating |
+| **ZSD** | Zero-score distribution modeling |
+| **PRP** | Possession-based rating process |
+| **Poisson** | Goal-scoring as Poisson process |
 
 ### Bayesian Models
 
-| Model | Description | Best For |
-|-------|-------------|----------|
-| **Poisson** | Bayesian goal-scoring with MCMC | Uncertainty quantification in predictions |
-| **NegBinom** | Overdispersed goal modeling | High-variance scoring patterns |
-| **Skellam** | Direct goal difference modeling | Spread betting, draw analysis |
-| **SkellamZero** | Zero-inflated Skellam | Sports with frequent draws |
-| **Weighted variants** | Time-weighted model fitting | Recent performance emphasis |
+| Model | Description |
+|-------|-------------|
+| **Poisson** | Bayesian goal-scoring with MCMC |
+| **NegBinom** | Overdispersed goal modeling |
+| **Skellam** | Direct goal difference modeling |
+| **SkellamZero** | Zero-inflated Skellam |
+| **Weighted variants** | Time-weighted model fitting |
 
 ## 📈 Example Notebooks
 
@@ -171,18 +190,21 @@ Both examples use real handball data and demonstrate:
 - Prediction comparison and visualization
 - Team strength analysis
 
-## 🔧 Advanced Usage
+## 🔧 Other Usage
 
 ### Model Benchmarking
 
 ```python
-from sklearn.metrics import mean_absolute_error
+import numpy as np
 import pandas as pd
 from ssat.data import get_sample_handball_match_data
 from ssat.frequentist import BradleyTerry, GSSD
 
 # Load sample data
-match_df = get_sample_handball_match_data()
+df = get_sample_handball_match_data()
+league = "Starligue"
+season = 2024
+match_df = df.loc[(df["league"] == league) & (df["season"] == season)]
 
 # Prepare data
 X = match_df[["home_team", "away_team"]]
@@ -202,7 +224,7 @@ results = {}
 for model in models:
     model.fit(X_train, y_train, Z_train)
     preds = model.predict(X_test)
-    results[model.NAME] = mean_absolute_error(y_test, preds)
+    results[model.NAME] = np.mean(np.abs(preds - y_test))
 
 print("Model Performance (MAE):")
 for model_name, mae in results.items():
@@ -212,13 +234,16 @@ for model_name, mae in results.items():
 ### Custom Team Analysis
 
 ```python
-from sklearn.metrics import mean_absolute_error
 import pandas as pd
 from ssat.data import get_sample_handball_match_data
 from ssat.frequentist import BradleyTerry, GSSD
 
 # Load sample data
-match_df = get_sample_handball_match_data()
+df = get_sample_handball_match_data()
+league = "Starligue"
+season = 2024
+match_df = df.loc[(df["league"] == league) & (df["season"] == season)]
+
 
 # Prepare data
 X = match_df[["home_team", "away_team"]]
@@ -257,7 +282,6 @@ match_data = pd.DataFrame({
     'away_team': ['Team B', 'Team C', ...],
     'home_goals': [25, 30, ...],
     'away_goals': [23, 28, ...],
-    'datetime': ['2024-01-01', '2024-01-02', ...]  # for time-based analysis
 })
 ```
 
@@ -269,10 +293,10 @@ match_data = pd.DataFrame({
 git clone https://github.com/bjrnsa/ssat.git
 cd ssat
 # Create and activate your virtual environment
-pip install -e ".[all]"
+pip install -e .
 ```
 
-### Run Examples
+### Run Examples or check out the rendered notebooks in the `ssat/notebooks` folder
 
 ```bash
 # Frequentist models example
@@ -280,13 +304,6 @@ python ssat/notebooks/frequentist_example.py
 
 # Bayesian models example
 python ssat/notebooks/bayesian_example.py
-```
-
-### Testing
-
-```bash
-# Run basic functionality tests
-python -c "import ssat; print('Import successful')"
 ```
 
 ## 📝 Dependencies
@@ -301,12 +318,6 @@ python -c "import ssat; print('Import successful')"
 - **pyarrow**: Efficient data storage
 - **scipy**: Statistical functions
 - **seaborn**: Statistical visualization
-
-### Optional Dependencies
-
-- **scikit-learn**: Machine learning utilities
-- **jupyter**: Interactive notebooks
-- **flashscore-scraper**: Sports data collection
 
 ## 📄 License
 
