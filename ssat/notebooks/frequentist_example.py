@@ -14,7 +14,7 @@ import pandas as pd
 import seaborn as sns
 
 from ssat.data import get_sample_handball_match_data
-from ssat.frequentist import BradleyTerry, GSSD
+from ssat.frequentist import GSSD, BradleyTerry
 
 # %% [markdown]
 # ## Understanding the Models
@@ -117,8 +117,10 @@ print("\nGSSD Team Ratings and Coefficients:")
 print(gssd_ratings)
 
 # Create simplified ratings for comparison
-gssd_team_ratings = gssd_ratings.drop(['Coefficients', 'Intercept'])
-gssd_team_ratings['rating'] = (gssd_team_ratings['pfh'] + gssd_team_ratings['pfa']) - (gssd_team_ratings['pah'] + gssd_team_ratings['paa'])  # Overall strength
+gssd_team_ratings = gssd_ratings.drop(["Coefficients", "Intercept"])
+gssd_team_ratings["rating"] = (gssd_team_ratings["pfh"] + gssd_team_ratings["pfa"]) - (
+    gssd_team_ratings["pah"] + gssd_team_ratings["paa"]
+)  # Overall strength
 print("\nGSSD Team Overall Ratings (Top 10):")
 print(gssd_team_ratings.head(10))
 
@@ -146,7 +148,9 @@ else:
 # Now make predictions on filtered test set
 if len(X_test_filtered) > 0:
     gssd_preds_filtered = gssd_model.predict(X_test_filtered)
-    gssd_probas_filtered = gssd_model.predict_proba(X_test_filtered, point_spread=0, include_draw=True)
+    gssd_probas_filtered = gssd_model.predict_proba(
+        X_test_filtered, point_spread=0, include_draw=True
+    )
 
     # Align Bradley-Terry predictions with filtered test set
     if missing_teams:
@@ -165,15 +169,13 @@ else:
 # Let's evaluate model performance on the test set and examine predictions.
 
 # %%
-import numpy as np
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 
 # Calculate prediction errors on filtered test set
-bt_mae = mean_absolute_error(y_test_filtered, bt_preds_filtered)
-bt_rmse = np.sqrt(mean_squared_error(y_test_filtered, bt_preds_filtered))
+bt_mae = np.mean(np.abs(y_test_filtered - bt_preds_filtered))
+bt_rmse = np.sqrt(np.mean(np.square(y_test_filtered - bt_preds_filtered)))
 
-gssd_mae = mean_absolute_error(y_test_filtered, gssd_preds_filtered)
-gssd_rmse = np.sqrt(mean_squared_error(y_test_filtered, gssd_preds_filtered))
+gssd_mae = np.mean(np.abs(y_test_filtered - gssd_preds_filtered))
+gssd_rmse = np.sqrt(np.mean(np.square(y_test_filtered - gssd_preds_filtered)))
 
 print("\n=== MODEL PERFORMANCE ON TEST SET ===")
 print(f"Bradley-Terry - MAE: {bt_mae:.3f}, RMSE: {bt_rmse:.3f}")
