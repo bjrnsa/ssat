@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+from ssat.data import get_sample_handball_match_data
 from ssat.bayesian.predictive_models import Poisson, Skellam
 
 # %% [markdown]
@@ -84,7 +85,7 @@ matches.index = matches.home_team + " vs " + matches.away_team
 # Next, we will load historical match data.
 
 # %%
-match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
+match_df = get_sample_handball_match_data()
 
 match_df = match_df.assign(
     weights=1.0,

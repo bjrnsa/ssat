@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 
+from ssat.data import get_sample_handball_match_data
 from ssat.frequentist import BradleyTerry, GSSD
 
 # %% [markdown]
@@ -32,7 +33,7 @@ from ssat.frequentist import BradleyTerry, GSSD
 
 # %%
 # Load and prepare data
-match_df = pd.read_parquet("ssat/data/sample_handball_match_data.parquet")
+match_df = get_sample_handball_match_data()
 
 league = "Herre Handbold Ligaen"
 seasons = [2024]
@@ -100,7 +101,7 @@ bt_model.fit(X_train, y_train, Z_train)
 # Get team ratings
 bt_ratings = bt_model.get_team_ratings()
 print("Bradley-Terry Team Ratings (Top 10):")
-print(bt_ratings.head(10))
+print(bt_ratings.sort_values(by="rating", ascending=False).head(10))
 
 # Make predictions on test set
 bt_preds = bt_model.predict(X_test)
@@ -174,7 +175,7 @@ bt_rmse = np.sqrt(mean_squared_error(y_test_filtered, bt_preds_filtered))
 gssd_mae = mean_absolute_error(y_test_filtered, gssd_preds_filtered)
 gssd_rmse = np.sqrt(mean_squared_error(y_test_filtered, gssd_preds_filtered))
 
-print("=== MODEL PERFORMANCE ON TEST SET ===")
+print("\n=== MODEL PERFORMANCE ON TEST SET ===")
 print(f"Bradley-Terry - MAE: {bt_mae:.3f}, RMSE: {bt_rmse:.3f}")
 print(f"GSSD - MAE: {gssd_mae:.3f}, RMSE: {gssd_rmse:.3f}")
 

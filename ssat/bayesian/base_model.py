@@ -15,6 +15,7 @@ logger.addHandler(logging.NullHandler())
 logger.propagate = False
 logger.setLevel(logging.CRITICAL)
 
+STANFILES_ROOT = Path(__file__).parent / "stan_files"
 
 class BaseModel(ABC):
     """Abstract base class for Bayesian predictive models."""
@@ -36,7 +37,7 @@ class BaseModel(ABC):
             If Stan file does not exist
         """
         # Configuration
-        self._stan_file = Path("ssat/bayesian/stan_files") / f"{stan_file}.stan"
+        self._stan_file = STANFILES_ROOT / f"{stan_file}.stan"
         if not self._stan_file.exists():
             raise ValueError(f"Stan file not found: {self._stan_file}")
         self.name = self._stan_file.stem
