@@ -541,7 +541,7 @@ class SSATModelComparisonApp(param.Parameterized):
         """)
         
         performance_card = pmui.Card(
-            pn.Column(performance_plot, performance_explanation),
+            pmui.Column(performance_plot, performance_explanation),
             title="Model Performance Comparison",
             margin=10,
             sizing_mode="stretch_width"
@@ -573,14 +573,14 @@ class SSATModelComparisonApp(param.Parameterized):
         """)
         
         predictions_card = pmui.Card(
-            pn.Column(prediction_plot, predictions_explanation),
+            pmui.Column(prediction_plot, predictions_explanation),
             title="Prediction Analysis",
             margin=10,
             sizing_mode="stretch_width"
         )
         
         main_tabs = pmui.Tabs(
-            ("Overview", pn.Column(status_card, data_summary_card)),
+            ("Overview", pmui.Column(status_card, data_summary_card)),
             ("Performance", performance_card),
             ("Predictions", predictions_card),
             ("Source Data", self._create_data_exploration_tab()),
