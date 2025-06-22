@@ -1,32 +1,9 @@
-# SSAT Model Comparison Dashboard Requirements
-# Core dependencies for the interactive model comparison application
-
-# Web framework and UI components
-# Note: panel-material-ui provides modern Material Design components
-# with responsive sizing capabilities
-panel>=1.4.0
-panel-material-ui>=1.0.0
-
-# Interactive data exploration
-panel-graphic-walker>=0.5.0
-
-# Data manipulation and analysis
+matplotlib
+numpy
 pandas>=2.0.0
-numpy>=1.24.0
-
-# Visualization
-matplotlib>=3.7.0
-seaborn>=0.12.0
-
-# SSAT library for real handball data
-# The app now uses actual match data instead of simulated data
-ssat>=0.0.3
-
-# Optional: For full Bayesian model support
-# arviz>=0.15.0
-# cmdstanpy>=1.2.0
-# scipy>=1.10.0
-# scikit-learn>=1.3.0
-
-# Note: The app is configured with stretch_width sizing_mode by default
-# for responsive layouts that adapt to different screen sizes
+panel
+panel-graphic-walker
+panel-material-ui
+seaborn
+-e . # to be replaced with ssat
+watchfiles
