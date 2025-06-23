@@ -1,4 +1,25 @@
-"""Base Bayesian Model for Sports Match Prediction with Abstract Interface."""
+"""Abstract base interface for Bayesian sports match prediction models.
+
+This module defines the BaseModel abstract base class that provides a standardized
+interface for all Bayesian predictive models in the SSAT framework. It handles
+Stan file parsing, data requirements extraction, and defines the contract that
+all concrete model implementations must follow.
+
+Classes
+-------
+BaseModel : ABC
+    Abstract base class defining the interface for Bayesian predictive models
+
+The BaseModel provides:
+- Stan file parsing and validation
+- Automatic data requirements extraction from Stan model specifications
+- Abstract methods for fitting, prediction, and model validation
+- Standardized API for team validation and data preprocessing
+- Built-in help system showing model-specific data requirements
+
+All concrete model implementations should inherit from this class and implement
+the required abstract methods for their specific distribution and modeling approach.
+"""
 
 import logging
 import re

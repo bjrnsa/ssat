@@ -1,5 +1,38 @@
-# %%
-"""Bayesian Poisson Model for sports prediction."""
+"""Bayesian Skellam models for sports match prediction.
+
+This module implements Skellam-based models for predicting match outcomes in sports.
+Skellam models directly model the goal difference (home_goals - away_goals) using
+the Skellam distribution, which is the distribution of the difference between two
+Poisson random variables. This approach is particularly efficient for prediction
+tasks focused on match outcomes rather than individual goal counts.
+
+Classes
+-------
+Skellam : Poisson
+    Standard Skellam model for goal difference prediction
+SkellamDecay : Skellam
+    Skellam model with temporal decay weighting
+SkellamZero : Skellam
+    Zero-inflated Skellam model for low-scoring sports
+SkellamZeroDecay : SkellamZero
+    Zero-inflated Skellam model with temporal decay weighting
+
+Skellam models are computationally efficient for outcome prediction since they
+directly model goal differences rather than individual goals. They inherit the
+Poisson class prediction interface but override key methods to work with goal
+differences. The zero-inflated variants are particularly useful for low-scoring
+sports with frequent draws.
+
+Model Features:
+- Direct goal difference modeling using Skellam distribution
+- Efficient outcome probability calculation
+- Zero-inflation option for sports with frequent draws
+- Temporal decay weighting support
+- Custom quantile function implementation for accurate predictions
+
+Note: Skellam models cannot simulate individual goal counts (simulate_matches
+will raise NotImplementedError), only goal differences.
+"""
 
 from typing import Optional, Union
 
@@ -11,11 +44,43 @@ from ssat.stats.skellam_optim import qskellam
 
 
 class Skellam(Poisson):
-    """Bayesian Skellam Model for predicting match scores.
+    """Bayesian Skellam model for predicting match goal differences.
 
-    This model uses a Skellam distribution (difference of two Poisson distributions)
-    to directly model the goal difference between teams, accounting for both team
-    attack and defense capabilities.
+    Uses the Skellam distribution to directly model goal differences (home - away)
+    rather than individual goal counts. The Skellam distribution is the difference
+    of two Poisson distributions, making it mathematically elegant for modeling
+    match outcomes while being computationally efficient.
+
+    Model Structure
+    ---------------
+    - Goal difference ~ Skellam(λ_home, λ_away)
+    - λ_home = exp(home_advantage + attack_home - defense_away)
+    - λ_away = exp(attack_away - defense_home)
+    - Skellam(k; λ₁, λ₂) represents difference of Poisson(λ₁) - Poisson(λ₂)
+
+    Parameters
+    ----------
+    stem : str, default="skellam"
+        Name of the Stan model file (without .stan extension)
+
+    Attributes:
+    ----------
+    predictions : Optional[np.ndarray]
+        Stored predictions from the last predict() call
+        Shape: [1, n_simulations, n_matches] for goal differences only
+
+    Limitations
+    -----------
+    - Cannot predict individual goal counts
+    - simulate_matches() raises NotImplementedError
+    - Only suitable for outcome-focused prediction tasks
+
+    Examples:
+    --------
+    >>> model = Skellam()
+    >>> model.fit(X_train, y_goal_diff)  # y is goal differences, not individual goals
+    >>> predictions = model.predict(X_test)  # Returns goal differences
+    >>> probabilities = model.predict_proba(X_test)  # Returns outcome probabilities
     """
 
     def __init__(
@@ -203,11 +268,37 @@ class Skellam(Poisson):
 
 
 class SkellamDecay(Skellam):
-    """Bayesian Skellam Model for predicting match scores.
+    """Bayesian Skellam model with temporal decay weighting.
 
-    This model uses a Skellam distribution (difference of two Poisson distributions)
-    to directly model the goal difference between teams, accounting for both team
-    attack and defense capabilities.
+    Combines the efficiency of Skellam goal difference modeling with temporal
+    decay weighting to emphasize recent matches. This model gives more weight
+    to recent matches when estimating team parameters, making it suitable for
+    sports where team strength changes significantly over time.
+
+    Model Structure
+    ---------------
+    Same as Skellam model but with temporal weights applied:
+    - Each match weighted by exp(-decay_rate * days_since_match)
+    - Goal differences modeled via Skellam distribution
+    - Recent matches have higher influence on parameter estimation
+
+    Parameters
+    ----------
+    stem : str, default="skellam_decay"
+        Name of the Stan model file (without .stan extension)
+
+    Additional Requirements
+    ----------------------
+    Z : array-like
+        Temporal decay weights or days since each match for training data
+        Required for fitting, optional for prediction (defaults to 0)
+
+    Examples:
+    --------
+    >>> model = SkellamDecay()
+    >>> days_since = (max_date - match_dates).dt.days
+    >>> model.fit(X_train, y_goal_diff, Z=days_since)
+    >>> predictions = model.predict(X_test)
     """
 
     def __init__(
@@ -226,11 +317,37 @@ class SkellamDecay(Skellam):
 
 
 class SkellamZero(Skellam):
-    """Bayesian Zero-inflated Skellam Model for predicting match scores.
+    """Bayesian Zero-inflated Skellam model for low-scoring sports.
 
-    This model uses a zero-inflated Skellam distribution to model goal differences,
-    particularly suitable for low-scoring matches or competitions with frequent draws.
-    The zero-inflation component explicitly models the probability of a draw.
+    Extends the Skellam model with zero-inflation to explicitly model the
+    probability of draws (goal difference = 0). This is particularly useful
+    for sports with frequent draws or low-scoring matches where the standard
+    Skellam distribution may underestimate draw probabilities.
+
+    Model Structure
+    ---------------
+    - With probability π: goal difference = 0 (draw)
+    - With probability (1-π): goal difference ~ Skellam(λ_home, λ_away)
+    - π ~ prior distribution (zero-inflation probability)
+    - Additional flexibility for modeling draw-heavy competitions
+
+    Parameters
+    ----------
+    stem : str, default="skellam_zero"
+        Name of the Stan model file (without .stan extension)
+
+    Use Cases
+    ---------
+    - Soccer/football leagues with many draws
+    - Low-scoring sports (hockey, field hockey)
+    - Defensive competitions with frequent ties
+    - Any sport where draws are more common than predicted by standard models
+
+    Examples:
+    --------
+    >>> model = SkellamZero()
+    >>> model.fit(X_train, y_goal_diff)  # Will learn zero-inflation parameter
+    >>> probs = model.predict_proba(X_test)  # May show higher draw probabilities
     """
 
     def __init__(
@@ -249,11 +366,43 @@ class SkellamZero(Skellam):
 
 
 class SkellamZeroDecay(SkellamZero):
-    """Bayesian Zero-inflated Skellam Model for predicting match scores.
+    """Bayesian Zero-inflated Skellam model with temporal decay weighting.
 
-    This model uses a zero-inflated Skellam distribution to model goal differences,
-    particularly suitable for low-scoring matches or competitions with frequent draws.
-    The zero-inflation component explicitly models the probability of a draw.
+    Combines zero-inflation for frequent draws with temporal decay weighting
+    for time-varying team strengths. This model is particularly suitable for
+    low-scoring sports where both draw frequency and team form changes over
+    time are important factors.
+
+    Model Structure
+    ---------------
+    - Zero-inflated Skellam with temporal weights
+    - Each match weighted by exp(-decay_rate * days_since_match)
+    - Explicit modeling of draw probability with zero-inflation
+    - Recent matches have higher influence on all parameters
+
+    Parameters
+    ----------
+    stem : str, default="skellam_zero_decay"
+        Name of the Stan model file (without .stan extension)
+
+    Additional Requirements
+    ----------------------
+    Z : array-like
+        Temporal decay weights or days since each match for training data
+        Required for fitting, optional for prediction (defaults to 0)
+
+    Use Cases
+    ---------
+    - Long-term league analysis with seasonal changes
+    - Sports with both frequent draws and form variations
+    - Tournament prediction with recent form emphasis
+
+    Examples:
+    --------
+    >>> model = SkellamZeroDecay()
+    >>> days_since = (max_date - match_dates).dt.days
+    >>> model.fit(X_train, y_goal_diff, Z=days_since)
+    >>> predictions = model.predict(X_test)  # Emphasizes recent form and draws
     """
 
     def __init__(

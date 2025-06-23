@@ -1,4 +1,23 @@
-"""Bayesian Model for Sports Match Prediction."""
+"""Concrete Bayesian predictive model implementation for sports match prediction.
+
+This module provides the PredictiveModel class, which implements the abstract BaseModel
+interface with concrete Stan-based Bayesian functionality. It handles MCMC sampling,
+inference data generation, and prediction methods for sports match modeling.
+
+Classes
+-------
+TeamLabeller : az.labels.BaseLabeller
+    Custom ArviZ labeller for team indices in plots
+PredictiveModel : BaseModel
+    Concrete implementation of Bayesian predictive models using Stan/cmdstanpy
+
+The PredictiveModel provides a complete implementation for:
+- MCMC fitting with configurable sampling parameters
+- Data preprocessing for Stan models
+- Inference data generation with ArviZ integration
+- Standardized prediction and probability estimation methods
+- Visualization utilities for model diagnostics and team statistics
+"""
 
 from typing import Any, Dict, List, Optional, Union
 
@@ -21,7 +40,35 @@ class TeamLabeller(az.labels.BaseLabeller):
 
 
 class PredictiveModel(BaseModel):
-    """Abstract base class for Bayesian predictive models that can predict matches."""
+    """Concrete implementation of Bayesian predictive models using Stan/cmdstanpy.
+
+    This class provides a complete implementation of the BaseModel interface,
+    handling MCMC sampling, data preprocessing, inference data generation, and
+    prediction methods. It serves as the foundation for all concrete model
+    implementations in the SSAT framework.
+
+    Key Features
+    ------------
+    - MCMC sampling with configurable parameters
+    - Automatic Stan model compilation and fitting
+    - ArviZ integration for Bayesian inference analysis
+    - Standardized data preprocessing for X/y/Z/weights format
+    - Prediction and probability estimation methods
+    - Model diagnostics and visualization utilities
+
+    Attributes:
+    ----------
+    kwargs : dict
+        Default MCMC sampling parameters for Stan
+    predictions : Optional[np.ndarray]
+        Cached predictions from the last predict() call
+    _fitted_with_Z : bool
+        Flag indicating if model was fitted with additional features Z
+
+    The class handles the complete workflow from data preparation through
+    model fitting to prediction generation, providing a consistent interface
+    for all Bayesian sports prediction models.
+    """
 
     kwargs = {
         "iter_sampling": 4000,
@@ -46,7 +93,23 @@ class PredictiveModel(BaseModel):
         data: Union[np.ndarray, pd.DataFrame],
         predictions: np.ndarray,
         col_names: list[str],
-    ) -> np.ndarray:
+    ) -> Union[np.ndarray, pd.DataFrame]:
+        """Format predictions with appropriate index and column names.
+
+        Parameters
+        ----------
+        data : Union[np.ndarray, pd.DataFrame]
+            Original input data used for prediction
+        predictions : np.ndarray
+            Raw predictions from the model
+        col_names : list[str]
+            Names for the prediction columns
+
+        Returns:
+        -------
+        Union[np.ndarray, pd.DataFrame]
+            Formatted predictions with meaningful index if input was DataFrame
+        """
         if isinstance(data, pd.DataFrame):
             # Create meaningful fixture index if we have team names
             if data.shape[1] >= 2 and hasattr(data, "columns"):

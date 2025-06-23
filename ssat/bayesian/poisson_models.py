@@ -1,5 +1,29 @@
-# %%
-"""Bayesian Poisson Model for sports prediction."""
+"""Bayesian Poisson models for sports match prediction.
+
+This module implements Poisson-based models for predicting match outcomes in sports.
+Poisson models are particularly suitable for modeling goal-scoring events, treating
+home and away goals as independent Poisson processes with team-specific attack and
+defense parameters.
+
+Classes
+-------
+Poisson : PredictiveModel
+    Standard Poisson model for match prediction
+PoissonDecay : Poisson
+    Poisson model with temporal decay weighting for recent matches
+
+The Poisson models predict both individual goal counts (home_goals, away_goals) and
+goal differences, making them suitable for detailed match simulation and various
+betting market predictions. They use hierarchical Bayesian estimation to learn
+team-specific attack and defense strengths from historical match data.
+
+Features:
+- Individual goal prediction for home and away teams
+- Goal difference prediction for match outcomes
+- Probability estimation for win/draw/loss scenarios
+- Support for temporal decay weighting (PoissonDecay)
+- Monte Carlo simulation for match outcomes
+"""
 
 from typing import Optional, Union
 
@@ -10,10 +34,37 @@ from ssat.bayesian.base_predictive_model import PredictiveModel
 
 
 class Poisson(PredictiveModel):
-    """Bayesian Poisson Model for predicting match scores.
+    """Bayesian Poisson model for predicting match scores.
 
-    This model uses a Poisson distribution to model goal scoring,
-    accounting for both team attack and defense capabilities.
+    This model treats home and away goals as independent Poisson processes,
+    with team-specific attack and defense parameters. It's particularly suitable
+    for sports where scoring events are relatively rare and independent.
+
+    Model Structure
+    ---------------
+    - Home goals ~ Poisson(λ_home)
+    - Away goals ~ Poisson(λ_away)
+    - λ_home = exp(home_advantage + attack_home - defense_away)
+    - λ_away = exp(attack_away - defense_home)
+
+    Parameters
+    ----------
+    stem : str, default="poisson"
+        Name of the Stan model file (without .stan extension)
+
+    Attributes:
+    ----------
+    predictions : Optional[np.ndarray]
+        Stored predictions from the last predict() call
+        Shape: [3, n_simulations, n_matches] for [goal_diff, home_goals, away_goals]
+
+    Examples:
+    --------
+    >>> model = Poisson()
+    >>> model.fit(X_train, y_train)  # X: team pairs, y: [home_goals, away_goals]
+    >>> predictions = model.predict(X_test)  # Returns goal differences
+    >>> probabilities = model.predict_proba(X_test)  # Returns [home, draw, away] probs
+    >>> simulations = model.simulate_matches(X_test)  # Returns [home_goals, away_goals]
     """
 
     def __init__(
@@ -221,10 +272,36 @@ class Poisson(PredictiveModel):
 
 
 class PoissonDecay(Poisson):
-    """Bayesian Poisson Model for predicting match scores.
+    """Bayesian Poisson model with temporal decay weighting for recent matches.
 
-    This model uses a Poisson distribution to model goal scoring,
-    accounting for both team attack and defense capabilities.
+    Extends the basic Poisson model by incorporating temporal decay weights,
+    giving more importance to recent matches when estimating team parameters.
+    This is particularly useful for sports where team strength changes significantly
+    over time due to transfers, form, or other factors.
+
+    Model Structure
+    ---------------
+    Same as Poisson model but with temporal weights applied to the likelihood:
+    - Each match has weight = exp(-decay_rate * days_since_match)
+    - Recent matches have higher influence on parameter estimation
+
+    Parameters
+    ----------
+    stem : str, default="poisson_decay"
+        Name of the Stan model file (without .stan extension)
+
+    Additional Requirements
+    ----------------------
+    Z : array-like
+        Temporal decay weights or days since each match for training data
+        Required for fitting, optional for prediction (defaults to 0)
+
+    Examples:
+    --------
+    >>> model = PoissonDecay()
+    >>> days_since = (max_date - match_dates).dt.days
+    >>> model.fit(X_train, y_train, Z=days_since)  # Z provides temporal weights
+    >>> predictions = model.predict(X_test)  # Z defaults to 0 for new matches
     """
 
     def __init__(
