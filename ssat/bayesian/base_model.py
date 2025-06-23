@@ -17,6 +17,7 @@ logger.setLevel(logging.CRITICAL)
 
 STANFILES_ROOT = Path(__file__).parent / "stan_files"
 
+
 class BaseModel(ABC):
     """Abstract base class for Bayesian predictive models."""
 
@@ -41,28 +42,32 @@ class BaseModel(ABC):
         if not self._stan_file.exists():
             raise ValueError(f"Stan file not found: {self._stan_file}")
         self.name = self._stan_file.stem
-        # Parse Stan file and print data requirements
+        # Parse Stan file to extract data requirements
         self._parse_stan_file()
-        self._print_data_requirements()
 
     @abstractmethod
     def fit(
         self,
-        base_data: Union[np.ndarray, pd.DataFrame],
-        model_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
-        optional_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[np.ndarray, pd.Series, pd.DataFrame],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        weights: Optional[Union[np.ndarray, pd.Series]] = None,
         **kwargs,
     ) -> "BaseModel":
         """Fit the model using MCMC sampling.
 
         Parameters
         ----------
-        base_data : Union[np.ndarray, pd.DataFrame]
-            Base data required by all models (e.g., team indices, scores)
-        model_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
-            Additional model-specific data (e.g., weights, covariates)
-        optional_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
-            Optional model-specific data (e.g., weights, covariates)
+        X : Union[pd.DataFrame, np.ndarray]
+            Team pairs data with exactly 2 columns: [home_team, away_team]
+        y : Union[np.ndarray, pd.Series, pd.DataFrame]
+            Target variable (REQUIRED):
+            - For Poisson/NegBinom: Home goals, Away goals (2 columns)
+            - For Skellam: Goal differences (1 column)
+        Z : Optional[Union[pd.DataFrame, np.ndarray]], default=None
+            Additional match-level features (e.g., match importance, referee data)
+        weights : Optional[Union[np.ndarray, pd.Series]], default=None
+            Sample weights for each match. If None, uses equal weights.
         **kwargs : dict
             Additional keyword arguments for sampling
 
@@ -119,20 +124,93 @@ class BaseModel(ABC):
     @abstractmethod
     def predict(
         self,
-        data: Union[np.ndarray, pd.DataFrame],
-        return_matches: bool = False,
+        X: Union[pd.DataFrame, np.ndarray],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        point_spread: int = 0,
     ) -> np.ndarray:
-        """Generate predictions for new data."""
+        """Generate predictions for new data.
+
+        Parameters
+        ----------
+        X : Union[pd.DataFrame, np.ndarray]
+            Team pairs data with exactly 2 columns: [home_team, away_team]
+        Z : Optional[Union[pd.DataFrame, np.ndarray]], default=None
+            Additional match-level features
+        point_spread : int, default=0
+            Point spread adjustment applied to predictions
+
+        Returns:
+        -------
+        np.ndarray
+            Predicted values (goal differences or similar)
+        """
         pass
 
     @abstractmethod
     def predict_proba(
         self,
-        data: Union[np.ndarray, pd.DataFrame],
-        point_spread: float = 0.0,
+        X: Union[pd.DataFrame, np.ndarray],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        point_spread: int = 0,
+        include_draw: bool = True,
         outcome: Optional[str] = None,
+        threshold: float = 0.5,
     ) -> np.ndarray:
-        """Generate probability predictions for new data."""
+        """Generate probability predictions for new data.
+
+        Parameters
+        ----------
+        X : Union[pd.DataFrame, np.ndarray]
+            Team pairs data with exactly 2 columns: [home_team, away_team]
+        Z : Optional[Union[pd.DataFrame, np.ndarray]], default=None
+            Additional match-level features
+        point_spread : int, default=0
+            Point spread adjustment
+        include_draw : bool, default=True
+            Whether to include draw probability
+        outcome : Optional[str], default=None
+            Specific outcome to predict ('home', 'away', 'draw')
+        threshold : float, default=0.5
+            Threshold for outcome prediction
+
+        Returns:
+        -------
+        np.ndarray
+            Predicted probabilities
+        """
+        pass
+
+    @abstractmethod
+    def simulate_matches(
+        self,
+        X: Union[pd.DataFrame, np.ndarray],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+    ) -> np.ndarray:
+        """Generate individual match simulations.
+
+        This method simulates detailed match outcomes, such as individual
+        home and away goals for models that support this level of detail.
+
+        Parameters
+        ----------
+        X : Union[pd.DataFrame, np.ndarray]
+            Team pairs data with exactly 2 columns: [home_team, away_team]
+        Z : Optional[Union[pd.DataFrame, np.ndarray]], default=None
+            Additional match-level features
+
+        Returns:
+        -------
+        np.ndarray
+            Simulated match details. Format depends on model type:
+            - Poisson/NegBinom models: (n_matches, 2) for [home_goals, away_goals]
+            - Skellam models: May raise NotImplementedError if only goal differences are available
+
+        Raises:
+        ------
+        NotImplementedError
+            If the model type does not support detailed match simulation
+            (e.g., models that only predict goal differences)
+        """
         pass
 
     def _parse_stan_file(self) -> None:
@@ -206,10 +284,11 @@ class BaseModel(ABC):
                 parts = line.split("~")
                 self._model_vars.append(parts[0].strip())
 
-    def _print_data_requirements(self) -> None:
-        """Print the data requirements for this model."""
-        print(f"\nData requirements for {self._stan_file.name}:")
-        print("-" * 50)
+    def _get_data_requirements_string(self) -> str:
+        """Get the data requirements for this model as a formatted string."""
+        lines = []
+        lines.append(f"Data requirements for {self._stan_file.name}:")
+        lines.append("-" * 50)
 
         # Group variables by their role
         index_vars = []
@@ -235,50 +314,112 @@ class BaseModel(ABC):
                     data_vars.append(var)
                 else:
                     model_vars.append(var)
-            elif var["name"].endswith("_optional"):
+            elif var["name"].endswith("sample_weights"):
                 optional_vars.append(var)
 
-        # Print base data requirements
-        print("Base Data Requirements (required):")
-        print("  These columns must be provided in base_data")
-        base_col_idx = 0
+        # Add usage
+        lines.append("")
+        lines.append("Usage:")
+        lines.append("  model.fit(X, y, Z, weights)")
+        lines.append("  model.predict(X, Z, point_spread)")
+        lines.append("  model.predict_proba(X, Z, point_spread, include_draw, outcome)")
+        lines.append("")
 
-        print("\n  Index columns (first columns):")
-        for var in index_vars:
-            name = var["name"].replace("_idx_match", "")
-            constraints = var["constraints"] or ""
-            desc = var["description"] or f"{name.replace('_', ' ').title()} index"
-            print(f"    {base_col_idx}. {desc} {constraints}")
-            base_col_idx += 1
+        # Add X requirements (team pairs)
+        lines.append("X - Fixtures:")
+        lines.append("  DataFrame with exactly 2 columns: [home_team, away_team]")
+        for i, var in enumerate(index_vars):
+            name = var["name"].replace("_idx_match", "").replace("_", " ").title()
+            lines.append(f"  - Column {i}: {name} names (strings)")
+        lines.append("")
 
-        print("\n  Data columns:")
+        # Add y requirements (target variable)
+        lines.append("y - Target:")
+        target_descriptions = []
         for var in data_vars:
             name = var["name"].replace("_match", "")
-            type_str = "int" if var["type"] == "int" else "float"
-            desc = var["description"] or f"{name.replace('_', ' ').title()}"
-            print(f"    {base_col_idx}. {desc} ({type_str})")
-            base_col_idx += 1
+            if "goal_diff" in name:
+                target_descriptions.append("Goal differences (home - away)")
+            elif "home_goals" in name or "away_goals" in name:
+                target_descriptions.append("Home goals, Away goals (2 columns)")
 
-        # Print model-specific data requirements if any
+        if target_descriptions:
+            for desc in set(target_descriptions):  # Remove duplicates
+                lines.append(f"  - {desc}")
+        else:
+            lines.append("  - Target variable as specified by model")
+        lines.append("")
+
+        # Determine model-specific requirements
+        model_name = self._stan_file.stem.lower()
+        is_decay = "decay" in model_name
+
+        # Add Z requirements (additional match data)
         if model_vars:
-            print("\nModel-Specific Data Requirements:")
-            print("  These columns can be provided in model_data")
-            model_col_idx = 0
+            if is_decay:
+                lines.append("Z - Additional Data:")
+                lines.append("  DataFrame or array with temporal weighting data")
+            else:
+                lines.append("Z - Additional Data:")
+                lines.append(
+                    "  DataFrame or array with additional match-level features"
+                )
 
-            for var in model_vars:
+            for i, var in enumerate(model_vars):
                 name = var["name"].replace("_match", "")
-                desc = var["description"] or "Sample weights"
-                print(f"    {model_col_idx}. {desc} (float)")
-                model_col_idx += 1
-
-        # Print optional data requirements if any
-        if optional_vars:
-            print("\nOptional Data Requirements:")
-            print("  These columns can be provided in model_data")
-            optional_col_idx = 0
-
-            for var in optional_vars:
-                name = var["name"].replace("_optional", "")
                 desc = var["description"] or f"{name.replace('_', ' ').title()}"
-                print(f"    {optional_col_idx}. {desc} (float)")
-                optional_col_idx += 1
+                type_str = "int" if var["type"] == "int" else "float"
+                lines.append(f"  - Column {i}: {desc} ({type_str})")
+            lines.append("")
+
+        # Add weights requirements (sample weights)
+        if optional_vars and not is_decay:
+            lines.append("weights - sample_weights (optional):")
+            lines.append("  Array of per-match weights for model fitting")
+            for var in optional_vars:
+                name = var["name"].replace("sample_weights", "")
+                desc = var["description"] or f"{name.replace('_', ' ').title()}"
+                lines.append(f"  - {desc} (float array, length = len(X))")
+            lines.append("")
+
+        return "\n".join(lines)
+
+    def __repr__(self) -> str:
+        """Return detailed model information including data requirements."""
+        return self._get_data_requirements_string()
+
+    def help(self) -> None:
+        """Display detailed usage information for this model."""
+        print(self._get_data_requirements_string())
+
+    @classmethod
+    def create(cls, stan_file: str = "base") -> "BaseModel":
+        """Create model instance and display data requirements.
+
+        This is the recommended way to create models as it shows the data
+        requirements immediately, helping users prepare the correct data format.
+
+        Parameters
+        ----------
+        stan_file : str, default="base"
+            Name of the Stan model file (without .stan extension)
+
+        Returns:
+        -------
+        BaseModel
+            Model instance with requirements displayed
+
+        Examples:
+        --------
+        >>> model = PoissonDecay.create()
+        Data requirements for poisson_decay.stan:
+        ...
+        >>> model.fit(X, y, Z)
+        """
+        # Create instance using normal constructor (silent)
+        instance = cls(stan_file)
+
+        # Display requirements after creation
+        print(instance._get_data_requirements_string())
+
+        return instance

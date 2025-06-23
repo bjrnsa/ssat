@@ -7,11 +7,17 @@ Available models:
 - SkellamZero: Zero-inflated Skellam for matches with frequent draws
 """
 
-from .predictive_models import NegBinom, Poisson, Skellam, SkellamZero
+from .nbinomial_models import NegBinom, NegBinomDecay
+from .poisson_models import Poisson, PoissonDecay
+from .skellam_models import Skellam, SkellamDecay, SkellamZero, SkellamZeroDecay
 
 __all__ = [
     "Poisson",
+    "PoissonDecay",
     "NegBinom",
+    "NegBinomDecay",
     "Skellam",
+    "SkellamDecay",
     "SkellamZero",
+    "SkellamZeroDecay",
 ]

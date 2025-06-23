@@ -6,7 +6,7 @@ data {
   array[N] int<lower=1, upper=T> away_team_idx_match; // Away team index
   array[N] int home_goals_match; // Home goals
   array[N] int away_goals_match; // Away goals
-  vector[N] raw_weights_optional; // (Optional) weights
+  vector[N] sample_weights; // sample weights
 }
 parameters {
   real intercept;
@@ -24,9 +24,9 @@ transformed parameters {
   vector[N] weights_match; // Normalized weights
 
   // Normalize weights to sum to N
-  real sum_weights = sum(raw_weights_optional);
+  real sum_weights = sum(sample_weights);
   for (i in 1 : N) {
-    weights_match[i] = raw_weights_optional[i] * N / sum_weights;
+    weights_match[i] = sample_weights[i] * N / sum_weights;
   }
 
   attack_team = attack_raw_team - mean(attack_raw_team);

@@ -14,6 +14,8 @@ parameters {
   real<lower=0.001, upper=100> tau;
   vector[T] attack_raw_team;
   vector[T] defence_raw_team;
+  real<lower=0> dispersion_home;
+  real<lower=0> dispersion_away;
   real xi_logit; // Logit-transformed xi parameter
 }
 transformed parameters {
@@ -26,7 +28,7 @@ transformed parameters {
   vector[N] weights_match; // Normalized weights
   real<lower=0, upper=1> xi = inv_logit(xi_logit);
 
-  // Calculate raw weights with transformed xi
+  // Esimate weights with transformed xi
   for (i in 1 : N) {
     weights_match_raw[i] = exp(-xi * days_since_match[i] / 365);
   }
@@ -50,16 +52,18 @@ model {
   home_advantage ~ normal(0, 1);
   intercept ~ normal(2, 1);
   tau ~ gamma(2, 0.5);
+  dispersion_home ~ gamma(3, 1);
+  dispersion_away ~ gamma(3, 1);
 
   attack_raw_team ~ normal(0, sigma);
   defence_raw_team ~ normal(0, sigma);
-  // Prior on logit-transformed xi
-  xi_logit ~ normal(3.5, 1); // Prior centered around xi ≈ 0.97 based on trace plots
+
+  xi_logit ~ normal(3.5, 1);
 
   for (i in 1 : N) {
     target += weights_match[i]
-              * (poisson_lpmf(home_goals_match[i] | lambda_home_match[i])
-                 + poisson_lpmf(away_goals_match[i] | lambda_away_match[i]));
+              * (neg_binomial_2_lpmf(home_goals_match[i] | lambda_home_match[i], dispersion_home)
+                 + neg_binomial_2_lpmf(away_goals_match[i] | lambda_away_match[i], dispersion_away));
   }
 }
 generated quantities {
@@ -71,12 +75,14 @@ generated quantities {
 
   for (i in 1 : N) {
     // Log likelihood
-    ll_home_match[i] = poisson_lpmf(home_goals_match[i] | lambda_home_match[i]);
-    ll_away_match[i] = poisson_lpmf(away_goals_match[i] | lambda_away_match[i]);
+    ll_home_match[i] = neg_binomial_2_lpmf(home_goals_match[i] | lambda_home_match[i], dispersion_home);
+    ll_away_match[i] = neg_binomial_2_lpmf(away_goals_match[i] | lambda_away_match[i], dispersion_away);
 
     // Generate predictions
-    pred_home_goals_match[i] = poisson_rng(lambda_home_match[i]);
-    pred_away_goals_match[i] = poisson_rng(lambda_away_match[i]);
+    pred_home_goals_match[i] = neg_binomial_2_rng(lambda_home_match[i],
+                                                  dispersion_home);
+    pred_away_goals_match[i] = neg_binomial_2_rng(lambda_away_match[i],
+                                                  dispersion_away);
     pred_goal_diff_match[i] = pred_home_goals_match[i]
                               - pred_away_goals_match[i];
   }

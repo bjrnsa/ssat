@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import arviz as az
 import cmdstanpy
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -23,9 +24,9 @@ class PredictiveModel(BaseModel):
     """Abstract base class for Bayesian predictive models that can predict matches."""
 
     kwargs = {
-        "iter_sampling": 8000,
-        "iter_warmup": 2000,
-        "chains": 4,
+        "iter_sampling": 4000,
+        "iter_warmup": 1000,
+        "chains": 2,
         "seed": 1,
         "adapt_delta": 0.95,
         "max_treedepth": 12,
@@ -34,6 +35,7 @@ class PredictiveModel(BaseModel):
         "parallel_chains": 10,
     }
     predictions: Optional[np.ndarray] = None
+    _fitted_with_Z: bool = False
 
     def _get_model_inits(self) -> Optional[Dict[str, Any]]:
         """Get model inits for Stan model."""
@@ -46,27 +48,50 @@ class PredictiveModel(BaseModel):
         col_names: list[str],
     ) -> np.ndarray:
         if isinstance(data, pd.DataFrame):
-            return pd.DataFrame(predictions, index=self._match_ids, columns=col_names)
+            # Create meaningful fixture index if we have team names
+            if data.shape[1] >= 2 and hasattr(data, "columns"):
+                try:
+                    # Try to create fixture names: "Home-Away"
+                    fixture_index = data.apply(
+                        lambda x: f"{x.iloc[0]}-{x.iloc[1]}", axis=1
+                    )
+                    return pd.DataFrame(
+                        predictions, index=fixture_index, columns=col_names
+                    )
+                except Exception:
+                    # Fallback to original match IDs if fixture creation fails
+                    return pd.DataFrame(
+                        predictions, index=self._match_ids, columns=col_names
+                    )
+            else:
+                return pd.DataFrame(
+                    predictions, index=self._match_ids, columns=col_names
+                )
         else:
             return predictions
 
     def fit(
         self,
-        base_data: Union[np.ndarray, pd.DataFrame],
-        model_data: Optional[Union[np.ndarray, pd.DataFrame]] = None,
-        optional_data: Optional[Union[np.ndarray, pd.DataFrame]] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[np.ndarray, pd.Series, pd.DataFrame],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        weights: Optional[Union[np.ndarray, pd.Series]] = None,
         **kwargs,
     ) -> "PredictiveModel":
         """Fit the model using MCMC sampling.
 
         Parameters
         ----------
-        base_data : Union[np.ndarray, pd.DataFrame]
-            Base data required by all models (e.g., team indices, scores)
-        model_data : Optional[Union[np.ndarray, pd.DataFrame]], optional
-            Additional model-specific data (e.g., weights, covariates)
-        optional_data : Optional[Union[np.ndarray, pd.DataFrame]], optional
-            Optional model-specific data (e.g., weights, covariates)
+        X : Union[pd.DataFrame, np.ndarray]
+            Team pairs data with exactly 2 columns: [home_team, away_team]
+        y : Union[np.ndarray, pd.Series, pd.DataFrame]
+            Target variable (REQUIRED):
+            - For Poisson/NegBinom: Home goals, Away goals (2 columns)
+            - For Skellam: Goal differences (1 column)
+        Z : Optional[Union[pd.DataFrame, np.ndarray]], default=None
+            Additional match-level features (e.g., match importance, referee data)
+        weights : Optional[Union[np.ndarray, pd.Series]], default=None
+            Sample weights for each match. If None, uses equal weights.
         **kwargs : dict
             Additional keyword arguments for sampling
 
@@ -75,8 +100,11 @@ class PredictiveModel(BaseModel):
         PredictiveModel
             The fitted model instance
         """
-        # Prepare data dictionary
-        data_dict = self._data_dict(base_data, model_data, optional_data, fit=True)
+        # Track if model was fitted with Z data
+        self._fitted_with_Z = Z is not None
+
+        # Prepare data dictionary using standardized API
+        data_dict = self._data_dict(X, y, Z, weights, fit=True)
 
         # Compile model
         model = cmdstanpy.CmdStanModel(stan_file=self._stan_file)
@@ -101,188 +129,6 @@ class PredictiveModel(BaseModel):
         self._generate_inference_data(data_dict)
 
         return self
-
-    def _data_dict(
-        self,
-        base_data: Union[np.ndarray, pd.DataFrame],
-        model_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
-        optional_data: Optional[Union[np.ndarray, pd.DataFrame, pd.Series]] = None,
-        fit: bool = True,
-    ) -> Dict[str, Any]:
-        """Prepare data dictionary for Stan model dynamically based on Stan file requirements.
-
-        Parameters
-        ----------
-        base_data : Union[np.ndarray, pd.DataFrame]
-            Base data required by all models (e.g., team indices, scores)
-        model_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
-            Additional model-specific data (e.g., weights, covariates)
-        optional_data : Optional[Union[np.ndarray, pd.DataFrame, pd.Series]], optional
-            Optional model-specific data (e.g., weights, covariates)
-        fit : bool, optional
-            Whether this is for fitting (True) or prediction (False)
-
-        Returns:
-        -------
-        Dict[str, Any]
-            Dictionary of data for Stan model
-        """
-        # Convert base_data to numpy array if DataFrame
-        if isinstance(base_data, pd.DataFrame):
-            base_array = base_data.to_numpy()
-            self._match_ids = base_data.index.to_numpy()
-        else:
-            base_array = np.asarray(base_data)
-            self._match_ids = np.arange(len(base_array))
-
-        # Convert model_data to numpy array if provided
-        model_array = None
-        if model_data is not None:
-            if isinstance(model_data, pd.Series):
-                model_array = model_data.to_numpy().reshape(-1, 1)
-            elif isinstance(model_data, pd.DataFrame):
-                model_array = model_data.to_numpy()
-            else:
-                model_array = np.asarray(model_data)
-                if model_array.ndim == 1:
-                    model_array = model_array.reshape(-1, 1)
-
-            # Validate shapes
-            if len(model_array) != len(base_array):
-                raise ValueError(
-                    f"model_data length ({len(model_array)}) must match base_data length ({len(base_array)})"
-                )
-
-        # Convert optional_data to numpy array if provided
-        optional_array = None
-        if optional_data is not None:
-            if isinstance(optional_data, pd.Series):
-                optional_array = optional_data.to_numpy().reshape(-1, 1)
-            elif isinstance(optional_data, pd.DataFrame):
-                optional_array = optional_data.to_numpy()
-        else:
-            optional_array = np.ones(len(base_array)).reshape(-1, 1)
-
-        # Initialize data dictionary with dimensions
-        data_dict = {
-            "N": len(base_array),
-        }
-
-        # Group variables by their role
-        index_vars = []
-        dimension_vars = []
-        data_vars = []
-        data_vars_prefix = [
-            "home_goals",
-            "away_goals",
-            "home_team",
-            "away_team",
-            "goal_diff",
-        ]
-        model_vars = []
-        optional_vars = []
-        for var in self._data_vars:
-            if var["name"].endswith("_idx_match"):
-                index_vars.append(var)
-            elif var["name"] in ["N", "T"]:
-                dimension_vars.append(var)
-            elif var["name"].endswith("_match"):
-                if any(prefix in var["name"] for prefix in data_vars_prefix):
-                    data_vars.append(var)
-                else:
-                    model_vars.append(var)
-            elif var["name"].endswith("_optional"):
-                optional_vars.append(var)
-
-        # Track current column index for base_data and model_data
-        base_col_idx = 0
-        model_col_idx = 0
-        optional_col_idx = 0
-        # Handle index columns (e.g., team indices)
-        if index_vars:
-            # Get unique entities and create mapping
-            index_cols = []
-            for _ in index_vars:
-                if base_col_idx >= base_array.shape[1]:
-                    raise ValueError(
-                        f"Not enough columns in base_data. Expected index column at position {base_col_idx}"
-                    )
-                index_cols.append(base_array[:, base_col_idx])
-                base_col_idx += 1
-
-            teams = np.unique(np.concatenate(index_cols))
-            n_teams = len(teams)
-            team_map = {entity: idx + 1 for idx, entity in enumerate(teams)}
-
-            # Store dimensions and mapping for future use
-            if fit:
-                self._team_map = team_map
-                self._n_teams = n_teams
-                self._entities = teams
-                data_dict["T"] = n_teams
-            else:
-                data_dict["T"] = self._n_teams
-
-        # Create index arrays
-        for i, var in enumerate(index_vars):
-            if not fit:
-                # Validate entities exist in mapping
-                unknown = set(base_array[:, i]) - set(self._team_map.keys())
-                if unknown:
-                    raise ValueError(f"Unknown entities in column {i}: {unknown}")
-                team_map = self._team_map
-
-            data_dict[var["name"]] = np.array(
-                [team_map[entity] for entity in base_array[:, i]]
-            )
-
-        # Handle data columns from base_data
-        for var in data_vars:
-            data_dtype = var["type"]
-            data_var_name = var["name"]
-            if base_col_idx >= base_array.shape[1]:
-                if not fit:
-                    # For prediction, use zeros if column not provided
-                    data_dict[data_var_name] = np.zeros(
-                        len(base_array),
-                        dtype=data_dtype,
-                    )
-                    continue
-                else:
-                    raise ValueError(
-                        f"Not enough columns in base_data. Expected data column at position {base_col_idx}"
-                    )
-
-            # Convert to correct type
-            data_dict[data_var_name] = np.array(
-                base_array[:, base_col_idx], dtype=data_dtype
-            )
-            base_col_idx += 1
-
-        # Handle weights and additional model-specific data
-        for var in model_vars:
-            model_var_name = var["name"]
-            model_dtype = var["type"]
-            if model_array is not None and model_col_idx < model_array.shape[1]:
-                data_dict[model_var_name] = np.array(
-                    model_array[:, model_col_idx], dtype=model_dtype
-                )
-                model_col_idx += 1
-
-        # Handle optional data columns
-        for var in optional_vars:
-            optional_var_name = var["name"]
-            optional_dtype = var["type"]
-            if (
-                optional_array is not None
-                and optional_col_idx < optional_array.shape[1]
-            ):
-                data_dict[optional_var_name] = np.array(
-                    optional_array[:, optional_col_idx], dtype=optional_dtype
-                )
-                optional_col_idx += 1
-
-        return data_dict
 
     def _generate_inference_data(self, data: Dict[str, Any]) -> None:
         """Generate inference data from Stan fit result."""
@@ -367,92 +213,284 @@ class PredictiveModel(BaseModel):
         if not self.is_fitted:
             raise ValueError("Model has not been fitted yet")
 
-    def predict(
+    def _data_dict(
         self,
-        data: Union[np.ndarray, pd.DataFrame],
-        return_matches: bool = False,
-        func: str = "median",
-        sampling_method: Optional[str] = None,
-    ) -> np.ndarray:
-        """Generate predictions for new data."""
-        if not self.is_fitted:
-            raise ValueError("Model must be fit before making predictions")
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[np.ndarray, pd.Series, pd.DataFrame],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
+        weights: Optional[Union[np.ndarray, pd.Series]] = None,
+        fit: bool = True,
+    ) -> Dict[str, Any]:
+        """Complete replacement for _data_dict using standardized X/y/Z/weights format.
 
-        data_dict = self._data_dict(data, fit=False)
+        Parameters
+        ----------
+        X : Union[pd.DataFrame, np.ndarray]
+            Team pairs data with exactly 2 columns: [home_team, away_team]
+        y : Union[np.ndarray, pd.Series, pd.DataFrame]
+            Target variable (REQUIRED):
+            - For Poisson/NegBinom: Home goals, Away goals (2 columns)
+            - For Skellam: Goal differences (1 column)
+        Z : Optional[Union[pd.DataFrame, np.ndarray]], default=None
+            Additional match-level features (e.g., match importance, referee data)
+        weights : Optional[Union[np.ndarray, pd.Series]], default=None
+            Sample weights for each match. If None, uses equal weights.
+        fit : bool, default=True
+            Whether this is for fitting (True) or prediction (False)
 
-        if self.model is None or self.fit_result is None:
-            raise ValueError("Model not properly initialized")
-
-        # Generate predictions using Stan model
-        preds = self.model.generate_quantities(
-            data=data_dict, previous_fit=self.fit_result
-        )
-        stan_predictions = np.array(
-            [preds.stan_variable(pred_var) for pred_var in self.pred_vars]
-        )
-
-        _, n_sims, n_matches = stan_predictions.shape
-        predictions = stan_predictions[-1]
-
-        if return_matches:
-            self.predictions = predictions.reshape(1, n_sims, n_matches)
-            return self.predictions
-
+        Returns:
+        -------
+        Dict[str, Any]
+            Dictionary of data for Stan model
+        """
+        # Convert X to pandas DataFrame if numpy array
+        if isinstance(X, np.ndarray):
+            X_df = pd.DataFrame(X, columns=["home_team", "away_team"])
         else:
-            self.predictions = predictions.reshape(1, n_sims, n_matches)
-            return self._format_predictions(
-                data,
-                getattr(np, func)(predictions, axis=0).T,
-                col_names=[self.pred_vars[-1]],
+            X_df = X.copy()
+
+        # Validate X has exactly 2 columns (team pairs)
+        if X_df.shape[1] != 2:
+            raise ValueError(
+                "X must have exactly 2 columns for team pairs [home_team, away_team]"
             )
 
-    def predict_proba(
-        self,
-        data: Union[np.ndarray, pd.DataFrame],
-        point_spread: float = 0.0,
-        outcome: Optional[str] = None,
-        func: str = "median",
-        sampling_method: Optional[str] = None,
-    ) -> np.ndarray:
-        """Generate probability predictions for new data."""
-        if not self.is_fitted:
-            raise ValueError("Model must be fit before making predictions")
+        # Handle target variable (y) - ALWAYS provided
+        if isinstance(y, pd.Series):
+            y_df = y.to_frame()
+        elif isinstance(y, pd.DataFrame):
+            y_df = y.copy()
+        elif isinstance(y, np.ndarray):
+            if y.ndim == 1:
+                y_df = pd.DataFrame(y, columns=["target"], index=X_df.index)
+            else:
+                # Multiple columns (e.g., home_goals, away_goals)
+                y_df = pd.DataFrame(y, index=X_df.index)
+        else:
+            y_df = pd.DataFrame(y, index=X_df.index)
 
-        if outcome not in [None, "home", "away", "draw"]:
-            raise ValueError("outcome must be None, 'home', 'away', or 'draw'")
+        # Combine team pairs with target variable
+        base_data = pd.concat([X_df, y_df], axis=1)
 
-        if self.predictions is None:
-            # Get raw predictions and calculate goal differences
-            predictions = self.predict(
-                data, return_matches=True, sampling_method=sampling_method, func=func
+        # Convert base_data to numpy array
+        base_array = base_data.to_numpy()
+        self._match_ids = base_data.index.to_numpy()
+
+        # Convert Z (additional match data) to numpy array if provided
+        # Auto-fill Z=zeros for decay models in prediction mode
+        model_array = None
+        if Z is not None:
+            if isinstance(Z, pd.DataFrame):
+                model_array = Z.to_numpy()
+            elif isinstance(Z, pd.Series):
+                model_array = Z.to_numpy().reshape(-1, 1)
+            elif isinstance(Z, np.ndarray):
+                model_array = Z.copy()
+                if model_array.ndim == 1:
+                    model_array = model_array.reshape(-1, 1)
+            else:
+                model_array = np.asarray(Z)
+                if model_array.ndim == 1:
+                    model_array = model_array.reshape(-1, 1)
+
+            # Validate shapes
+            if len(model_array) != len(base_array):
+                raise ValueError(
+                    f"Z length ({len(model_array)}) must match X length ({len(base_array)})"
+                )
+        elif not fit and self._fitted_with_Z:
+            # Auto-fill zeros for decay models during prediction
+            model_array = np.zeros((len(base_array), 1), dtype=int)
+
+        # Convert weights to numpy array if provided
+        weights_array = None
+        if weights is not None:
+            if isinstance(weights, pd.Series):
+                weights_array = weights.to_numpy().reshape(-1, 1)
+            elif isinstance(weights, np.ndarray):
+                weights_array = weights.copy().reshape(-1, 1)
+            else:
+                weights_array = np.asarray(weights).reshape(-1, 1)
+        else:
+            weights_array = np.ones(len(base_array)).reshape(-1, 1)
+
+        # Initialize data dictionary with dimensions
+        data_dict = {
+            "N": len(base_array),
+        }
+
+        # Group variables by their role (same logic as original)
+        index_vars = []
+        dimension_vars = []
+        data_vars = []
+        data_vars_prefix = [
+            "home_goals",
+            "away_goals",
+            "home_team",
+            "away_team",
+            "goal_diff",
+        ]
+        model_vars = []
+        optional_vars = []
+        for var in self._data_vars:
+            if var["name"].endswith("_idx_match"):
+                index_vars.append(var)
+            elif var["name"] in ["N", "T"]:
+                dimension_vars.append(var)
+            elif var["name"].endswith("_match"):
+                if any(prefix in var["name"] for prefix in data_vars_prefix):
+                    data_vars.append(var)
+                else:
+                    model_vars.append(var)
+            elif var["name"].endswith("sample_weights"):
+                optional_vars.append(var)
+
+        # Track current column index for base_data, Z, and weights
+        base_col_idx = 0
+        model_col_idx = 0
+        optional_col_idx = 0
+
+        # Handle index columns (e.g., team indices)
+        if index_vars:
+            # Get unique entities and create mapping
+            index_cols = []
+            for _ in index_vars:
+                if base_col_idx >= base_array.shape[1]:
+                    raise ValueError(
+                        f"Not enough columns in base_data. Expected index column at position {base_col_idx}"
+                    )
+                index_cols.append(base_array[:, base_col_idx])
+                base_col_idx += 1
+
+            teams = np.unique(np.concatenate(index_cols))
+            n_teams = len(teams)
+            team_map = {entity: idx + 1 for idx, entity in enumerate(teams)}
+
+            # Store dimensions and mapping for future use
+            if fit:
+                self._team_map = team_map
+                self._n_teams = n_teams
+                self._entities = teams
+                data_dict["T"] = n_teams
+            else:
+                data_dict["T"] = self._n_teams
+
+        # Create index arrays
+        for i, var in enumerate(index_vars):
+            if not fit:
+                # Validate entities exist in mapping
+                unknown = set(base_array[:, i]) - set(self._team_map.keys())
+                if unknown:
+                    raise ValueError(f"Unknown entities in column {i}: {unknown}")
+                team_map = self._team_map
+
+            data_dict[var["name"]] = np.array(
+                [team_map[entity] for entity in base_array[:, i]]
             )
-        else:
-            predictions = self.predictions
 
-        # If predictions dimension n x 1, assume predictions are already goal differences
-        if predictions.shape[0] == 1:
-            goal_differences = predictions[0] + point_spread
-        elif predictions.shape[0] == 2:
-            goal_differences = predictions[0] - predictions[1] + point_spread
-        else:
-            raise ValueError("Invalid predictions shape")
+        # Handle data columns from base_data (target variables)
+        for var in data_vars:
+            data_dtype = var["type"]
+            data_var_name = var["name"]
+            if base_col_idx >= base_array.shape[1]:
+                if not fit:
+                    # For prediction, use zeros if column not provided
+                    data_dict[data_var_name] = np.zeros(
+                        len(base_array),
+                        dtype=data_dtype,
+                    )
+                    continue
+                else:
+                    raise ValueError(
+                        f"Not enough columns in base_data. Expected data column at position {base_col_idx}"
+                    )
 
-        # Calculate home win probabilities directly
-        home_probs = (goal_differences > 0).mean(axis=0)
-        draw_probs = (goal_differences == 0).mean(axis=0)
-        away_probs = (goal_differences < 0).mean(axis=0)
+            # Convert to correct type
+            data_dict[data_var_name] = np.array(
+                base_array[:, base_col_idx], dtype=data_dtype
+            )
+            base_col_idx += 1
 
-        # Handle specific outcome requests
-        if outcome == "home":
-            return self._format_predictions(data, home_probs, col_names=["home"])
-        elif outcome == "away":
-            return self._format_predictions(data, away_probs, col_names=["away"])
-        elif outcome == "draw":
-            return self._format_predictions(data, draw_probs, col_names=["draw"])
+        # Handle Z (additional model-specific data)
+        for var in model_vars:
+            model_var_name = var["name"]
+            model_dtype = var["type"]
+            if model_array is not None and model_col_idx < model_array.shape[1]:
+                data_dict[model_var_name] = np.array(
+                    model_array[:, model_col_idx], dtype=model_dtype
+                )
+                model_col_idx += 1
 
-        # Return both probabilities
-        return self._format_predictions(
-            data,
-            np.stack([home_probs, draw_probs, away_probs]).T,
-            col_names=["home", "draw", "away"],
+        # Handle weights (optional data columns)
+        for var in optional_vars:
+            optional_var_name = var["name"]
+            optional_dtype = var["type"]
+            if weights_array is not None and optional_col_idx < weights_array.shape[1]:
+                data_dict[optional_var_name] = np.array(
+                    weights_array[:, optional_col_idx], dtype=optional_dtype
+                )
+                optional_col_idx += 1
+
+        return data_dict
+
+    @classmethod
+    def create(cls) -> "PredictiveModel":
+        """Create model instance and display data requirements.
+
+        This is the recommended way to create models as it shows the data
+        requirements immediately, helping users prepare the correct data format.
+
+        Returns:
+        -------
+        PredictiveModel
+            Model instance with requirements displayed
+
+        Examples:
+        --------
+        >>> model = PoissonWeighted.create()
+        Data requirements for poisson_decay.stan:
+        ...
+        >>> model.fit(X, y, Z)
+        """
+        # Create instance using normal constructor (silent)
+        instance = cls()
+
+        # Display requirements after creation
+        print(instance._get_data_requirements_string())
+
+        return instance
+
+    def plot_trace(
+        self,
+        var_names: Optional[list[str]] = None,
+    ) -> None:
+        """Plot trace of the model.
+
+        Parameters
+        ----------
+        var_names : Optional[list[str]], optional
+            List of variable names to plot, by default None
+            Keyword arguments passed to arviz.plot_trace
+        """
+        if var_names is None:
+            var_names = self._model_vars
+
+        az.plot_trace(
+            self.inference_data,
+            var_names=var_names,
+            compact=True,
+            combined=True,
         )
+        plt.tight_layout()
+        plt.show()
+
+    def plot_team_stats(self) -> None:
+        """Plot team strength statistics."""
+        ax = az.plot_forest(
+            self.inference_data.posterior.attack_team
+            - self.inference_data.posterior.defence_team,
+            labeller=TeamLabeller(),
+        )
+        ax[0].set_title("Overall Team Strength")
+        plt.tight_layout()
+        plt.show()
