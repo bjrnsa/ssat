@@ -104,3 +104,4 @@ __pypackages__/
 # Ignore temporary files created as part of compilation.
 *.hpp
 *.o
+.claude/settings.local.json
