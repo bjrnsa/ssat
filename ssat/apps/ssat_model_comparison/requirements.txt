@@ -1,0 +1,9 @@
+matplotlib
+numpy
+pandas>=2.0.0
+panel
+panel-graphic-walker
+panel-material-ui
+seaborn
+-e . # to be replaced with ssat
+watchfiles
