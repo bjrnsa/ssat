@@ -74,14 +74,15 @@ class ZSD(BaseModel):
 
     def __init__(self) -> None:
         """Initialize ZSD model."""
-        self.is_fitted_ = False
+        self.is_fitted = False
 
     def fit(
         self,
-        X: pd.DataFrame,
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        Z: Optional[pd.DataFrame] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[np.ndarray, pd.Series],
+        Z: Union[pd.DataFrame, np.ndarray],
         weights: Optional[np.ndarray] = None,
+        **kwargs,
     ) -> "ZSD":
         """Fit the ZSD model.
 
@@ -91,99 +92,80 @@ class ZSD(BaseModel):
             DataFrame containing match data with two columns:
             - First column: Home team names (string)
             - Second column: Away team names (string)
-            If y is None, X must have a third column with goal differences.
-        y : Optional[Union[np.ndarray, pd.Series]], default=None
-            Goal differences (home - away). If provided, this will be used instead of
-            the third column in X.
-        Z : Optional[pd.DataFrame], default=None
+        y : Union[np.ndarray, pd.Series]
+            Goal differences (home - away).
+        Z : pd.DataFrame
             Additional data for the model, such as home_goals and away_goals.
             No column name checking is performed, only dimension validation.
         weights : Optional[np.ndarray], default=None
             Weights for rating optimization
+        **kwargs : dict
+            Additional optimization parameters (ftol, maxiter, etc.)
 
         Returns:
         -------
         self : ZSD
             Fitted model
         """
-        try:
-            # Validate input dimensions and types
-            self._validate_X(X)
+        # Validate input dimensions and types
+        self._validate_X(X)
+        self._validate_Z(X, Z, True)
 
-            # Validate Z is provided and has required dimensions
-            if Z is None:
-                raise ValueError(
-                    "Z must be provided with home_goals and away_goals data"
-                )
-            if len(Z) != len(X):
-                raise ValueError("Z must have the same number of rows as X")
+        # Extract team data using helper method
+        self.home_team, self.away_team = self._extract_teams(X)
 
-            # Extract team data (first two columns)
-            self.home_team_ = X.iloc[:, 0].to_numpy()
-            self.away_team_ = X.iloc[:, 1].to_numpy()
+        # Handle goal difference (y)
+        self.goal_diff = np.asarray(y)
 
-            # Handle goal difference (y)
-            if y is not None:
-                self.spread_ = np.asarray(y)
-            elif X.shape[1] >= 3:
-                self.spread_ = X.iloc[:, 2].to_numpy()
-            else:
-                raise ValueError(
-                    "Either y or a third column in X with goal differences must be provided"
-                )
+        # Validate goal difference
+        if not np.issubdtype(self.goal_diff.dtype, np.number):
+            raise ValueError("Goal differences must be numeric")
 
-            # Validate goal difference
-            if not np.issubdtype(self.spread_.dtype, np.number):
-                raise ValueError("Goal differences must be numeric")
+        # Extract home_goals and away_goals from Z
+        if isinstance(Z, np.ndarray):
+            self.home_goals = Z[:, 0]
+            self.away_goals = Z[:, 1]
+        else:
+            self.home_goals = Z.iloc[:, 0].to_numpy()
+            self.away_goals = Z.iloc[:, 1].to_numpy()
 
-            self.home_goals_ = Z.iloc[:, 0].to_numpy()
-            self.away_goals_ = Z.iloc[:, 1].to_numpy()
+        # Team setup
+        self.teams = np.unique(np.concatenate([self.home_team, self.away_team]))
+        self.n_teams = len(self.teams)
+        self.team_map = {team: idx for idx, team in enumerate(self.teams)}
 
-            if len(self.home_goals_) == 0 or len(self.away_goals_) == 0:
-                raise ValueError("Empty input data")
+        # Get team indices using helper method
+        self.home_idx, self.away_idx = self._get_team_indices(
+            self.home_team, self.away_team
+        )
 
-            # Team setup
-            self.teams_ = np.unique(np.concatenate([self.home_team_, self.away_team_]))
-            self.n_teams_ = len(self.teams_)
-            self.team_map_ = {team: idx for idx, team in enumerate(self.teams_)}
+        # Set weights
+        n_matches = len(X)
+        self.weights = np.ones(n_matches) if weights is None else weights
 
-            # Create team indices
-            self.home_idx_ = np.array(
-                [self.team_map_[team] for team in self.home_team_]
-            )
-            self.away_idx_ = np.array(
-                [self.team_map_[team] for team in self.away_team_]
-            )
+        # Calculate scoring statistics
+        self._calculate_scoring_statistics()
 
-            # Set weights
-            n_matches = len(X)
-            self.weights_ = np.ones(n_matches) if weights is None else weights
+        # Initialize and optimize parameters
+        self._init_parameters()
+        self.params = self._optimize_parameters(**kwargs)
 
-            self._calculate_scoring_statistics()
+        # Fit spread model
+        pred_scores = self._predict_scores()
+        predictions = pred_scores["home"] - pred_scores["away"]
+        residuals = self.goal_diff - predictions
+        sse = np.sum((residuals**2))
+        self.spread_error = np.sqrt(sse / (X.shape[0] - X.shape[1]))
 
-            # Optimize
-            self.params_ = self._optimize_parameters()
-
-            # Fit spread model
-            pred_scores = self._predict_scores()
-            predictions = pred_scores["home"] - pred_scores["away"]
-            residuals = self.spread_ - predictions
-            sse = np.sum((residuals**2))
-            self.spread_error_ = np.sqrt(sse / (X.shape[0] - X.shape[1]))
-
-            self.is_fitted_ = True
-            return self
-
-        except Exception as e:
-            self.is_fitted_ = False
-            raise ValueError(f"Model fitting failed: {str(e)}") from e
+        self.is_fitted = True
+        return self
 
     def predict(
         self,
         X: pd.DataFrame,
         Z: Optional[pd.DataFrame] = None,
         point_spread: int = 0,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Predict point spreads for matches.
 
         Parameters
@@ -196,28 +178,28 @@ class ZSD(BaseModel):
             Additional data for prediction. Not used in this method but included for API consistency.
         point_spread : float, default=0.0
             Point spread adjustment
+
+        Returns:
+        -------
+        np.ndarray
+            Predicted point spreads (goal differences)
         """
-        self._check_is_fitted()
-        self._validate_X(X, fit=False)
+        if not self.is_fitted:
+            raise ValueError("Model must be fit before making predictions")
 
-        home_teams = X.iloc[:, 0].to_numpy()
-        away_teams = X.iloc[:, 1].to_numpy()
+        # Extract teams and get indices using helper methods
+        home_teams, away_teams = self._extract_teams(X)
+        home_idx, away_idx = self._get_team_indices(home_teams, away_teams)
 
-        predicted_spreads = np.zeros(len(X))
+        # Vectorized prediction calculation
+        pred_scores = self._predict_scores(home_idx, away_idx)
+        predicted_spreads = pred_scores["home"] - pred_scores["away"] + point_spread
 
-        for i, (home_team, away_team) in enumerate(zip(home_teams, away_teams)):
-            # Validate teams
-            self._validate_teams([home_team, away_team])
-
-            # Get predicted scores using team indices
-            pred_scores = self._predict_scores(
-                home_idx=self.team_map_[home_team], away_idx=self.team_map_[away_team]
-            )
-
-            # Calculate spread
-            predicted_spreads[i] = pred_scores["home"] - pred_scores["away"]
-
-        return predicted_spreads
+        return self._format_predictions(
+            X,
+            predicted_spreads,
+            col_names=["goal_diff"],
+        )
 
     def predict_proba(
         self,
@@ -227,7 +209,7 @@ class ZSD(BaseModel):
         include_draw: bool = True,
         outcome: Optional[str] = None,
         threshold: float = 0.5,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Predict match outcome probabilities.
 
         Parameters
@@ -255,65 +237,77 @@ class ZSD(BaseModel):
             If include_draw=True: [home, draw, away]
             If include_draw=False: [home, away]
         """
-        self._check_is_fitted()
-        self._validate_X(X, fit=False)
+        if not self.is_fitted:
+            raise ValueError("Model must be fit before making predictions")
 
-        home_teams = X.iloc[:, 0].to_numpy()
-        away_teams = X.iloc[:, 1].to_numpy()
+        if outcome not in [None, "home", "away", "draw"]:
+            raise ValueError("outcome must be None, 'home', 'away', or 'draw'")
 
-        if outcome is None:
-            n_classes = 3 if include_draw else 2
-            probabilities = np.zeros((len(X), n_classes))
+        if not include_draw and outcome == "draw":
+            raise ValueError("Cannot predict draw when include_draw=False")
+
+        predictions = self.predict(X, Z, point_spread=0).to_numpy().reshape(-1, 1)
+        thresholds = np.array([point_spread + threshold, -point_spread - threshold])
+        thresholds = np.tile(thresholds, (len(predictions), 1))
+
+        if include_draw:
+            probs = stats.norm.cdf(thresholds, predictions, self.spread_error)
+            home_probs = 1 - probs[:, 0]
+            draw_probs = probs[:, 0] - probs[:, 1]
+            away_probs = probs[:, 1]
         else:
-            probabilities = np.zeros((len(X),))
-
-        for i, (home_team, away_team) in enumerate(zip(home_teams, away_teams)):
-            # Validate teams
-            self._validate_teams([home_team, away_team])
-
-            # Get predicted scores using team indices
-            pred_scores = self._predict_scores(
-                home_idx=self.team_map_[home_team], away_idx=self.team_map_[away_team]
+            home_probs = 1 - stats.norm.cdf(
+                point_spread, predictions, self.spread_error
             )
+            away_probs = 1 - home_probs
 
-            # Calculate spread
-            predicted_spread = pred_scores["home"] - pred_scores["away"]
+        # Handle specific outcome requests
+        if outcome == "home":
+            return self._format_predictions(X, home_probs, col_names=["home"])
+        elif outcome == "away":
+            return self._format_predictions(X, away_probs, col_names=["away"])
+        elif outcome == "draw":
+            return self._format_predictions(X, draw_probs, col_names=["draw"])
 
-            # Calculate probabilities
-            if include_draw:
-                thresholds = np.array(
-                    [point_spread + threshold, -point_spread - threshold]
-                )
-                probs = stats.norm.cdf(thresholds, predicted_spread, self.spread_error_)
-                prob_home, prob_draw, prob_away = (
-                    1 - probs[0],
-                    probs[0] - probs[1],
-                    probs[1],
-                )
-            else:
-                prob_home = 1 - stats.norm.cdf(
-                    point_spread, predicted_spread, self.spread_error_
-                )
-                prob_home, prob_away = prob_home, 1 - prob_home
+        # Handle include_draw parameter
+        if include_draw:
+            # Return all three probabilities
+            result = np.stack([home_probs, draw_probs, away_probs]).T
+            col_names = ["home", "draw", "away"]
+        else:
+            # Return only home/away, renormalized
+            home_away_sum = home_probs + away_probs
+            home_probs_norm = home_probs / home_away_sum
+            away_probs_norm = away_probs / home_away_sum
+            result = np.stack([home_probs_norm, away_probs_norm]).T
+            col_names = ["home", "away"]
 
-            if outcome is not None:
-                if outcome == "home":
-                    probabilities[i] = prob_home
-                elif outcome == "away":
-                    probabilities[i] = prob_away
-                elif outcome == "draw":
-                    probabilities[i] = prob_draw
-            else:
-                if include_draw:
-                    probabilities[i] = [prob_home, prob_draw, prob_away]
-                else:
-                    probabilities[i] = [prob_home, prob_away]
-        if outcome:
-            return probabilities.reshape(-1)
-        return probabilities
+        return self._format_predictions(X, result, col_names=col_names)
 
-    def _optimize_parameters(self) -> np.ndarray:
-        """Optimize model parameters using SLSQP optimization.
+    def _init_parameters(self) -> None:
+        """Initialize model parameters with smart defaults."""
+        # Initialize parameters based on team performance
+        self.initial_params = np.random.normal(0, 0.1, 2 * self.n_teams + 2)
+
+        # Set constraints for optimization
+        self.constraints = [
+            {"type": "eq", "fun": lambda p: np.mean(p[: self.n_teams])},
+            {
+                "type": "eq",
+                "fun": lambda p: np.mean(p[self.n_teams : 2 * self.n_teams]),
+            },
+        ]
+
+        # Set bounds for optimization
+        self.bounds = [(-50, 50)] * (2 * self.n_teams) + [(-np.inf, np.inf)] * 2
+
+    def _optimize_parameters(self, **kwargs) -> pd.DataFrame:
+        """Optimize model parameters with fallback methods.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Additional optimization parameters (ftol, maxiter, etc.)
 
         Returns:
         -------
@@ -323,32 +317,35 @@ class ZSD(BaseModel):
         Raises:
         ------
         RuntimeError
-            If optimization fails
+            If optimization fails with all methods
         """
-        constraints = [
-            {"type": "eq", "fun": lambda p: np.mean(p[: self.n_teams_])},
-            {
-                "type": "eq",
-                "fun": lambda p: np.mean(p[self.n_teams_ : 2 * self.n_teams_]),
-            },
-        ]
+        # Default optimization options
+        default_options = {"maxiter": 100000, "ftol": 1e-8}
+        options = {**default_options, **kwargs}
 
-        bounds = [(-50, 50)] * (2 * self.n_teams_) + [(-np.inf, np.inf)] * 2
-        x0 = self._get_initial_params()
+        # Try different optimization methods
+        methods = ["SLSQP", "trust-constr"]
 
-        result = minimize(
-            fun=self._sse_function,
-            x0=x0,
-            method="SLSQP",
-            constraints=constraints,
-            bounds=bounds,
-            options={"maxiter": 100000, "ftol": 1e-8},
-        )
+        for method in methods:
+            try:
+                result = minimize(
+                    fun=self._sse_function,
+                    x0=self.initial_params,
+                    method=method,
+                    constraints=self.constraints,
+                    bounds=self.bounds,
+                    options=options,
+                )
 
-        if not result.success:
-            raise RuntimeError(f"Optimization failed: {result.message}")
+                if result.success:
+                    return result.x
 
-        return result.x
+            except Exception:
+                # Continue to next method if current one fails
+                continue
+
+        # If no method succeeded, raise an error
+        raise RuntimeError("Optimization failed with all attempted methods")
 
     def _sse_function(self, params: np.ndarray) -> np.float64:
         """Calculate the weighted sum of squared errors for given parameters.
@@ -365,14 +362,14 @@ class ZSD(BaseModel):
         """
         # Unpack parameters efficiently
         pred_scores = self._predict_scores(
-            self.home_idx_,
-            self.away_idx_,
-            *np.split(params, [self.n_teams_, 2 * self.n_teams_]),
+            self.home_idx,
+            self.away_idx,
+            *np.split(params, [self.n_teams, 2 * self.n_teams]),
         )
-        squared_errors = (self.home_goals_ - pred_scores["home"]) ** 2 + (
-            self.away_goals_ - pred_scores["away"]
+        squared_errors = (self.home_goals - pred_scores["home"]) ** 2 + (
+            self.away_goals - pred_scores["away"]
         ) ** 2
-        return np.sum(squared_errors * self.weights_, axis=0)
+        return np.sum(squared_errors * self.weights, axis=0)
 
     def _predict_scores(
         self,
@@ -403,7 +400,7 @@ class ZSD(BaseModel):
             Dict with 'home' and 'away' predicted scores
         """
         if factors is None:
-            factors = self.params_[-2:]
+            factors = self.params[-2:]
 
         ratings = self._get_team_ratings(home_idx, away_idx, home_ratings, away_ratings)
 
@@ -412,15 +409,15 @@ class ZSD(BaseModel):
                 self._parameter_estimate(
                     factors[0], ratings["home_rating"], ratings["away_rating"]
                 ),
-                self.mean_home_score_,
-                self.std_home_score_,
+                self.mean_home_score,
+                self.std_home_score,
             ),
             "away": self._transform_to_score(
                 self._parameter_estimate(
                     factors[1], ratings["home_away_rating"], ratings["away_home_rating"]
                 ),
-                self.mean_away_score_,
-                self.std_away_score_,
+                self.mean_away_score,
+                self.std_away_score,
             ),
         }
 
@@ -450,9 +447,9 @@ class ZSD(BaseModel):
             Dictionary with team ratings
         """
         if home_ratings is None and away_ratings is None:
-            home_ratings, away_ratings = np.split(self.params_[: 2 * self.n_teams_], 2)
+            home_ratings, away_ratings = np.split(self.params[: 2 * self.n_teams], 2)
         if home_idx is None:
-            home_idx, away_idx = self.home_idx_, self.away_idx_
+            home_idx, away_idx = self.home_idx, self.away_idx
 
         assert home_ratings is not None and away_ratings is not None, (
             "home_ratings and away_ratings must be provided"
@@ -467,7 +464,7 @@ class ZSD(BaseModel):
 
     def _parameter_estimate(
         self, adj_factor: np.float64, home_rating: np.ndarray, away_rating: np.ndarray
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Calculate parameter estimate for score prediction.
 
         Parameters
@@ -488,7 +485,7 @@ class ZSD(BaseModel):
 
     def _transform_to_score(
         self, param: np.ndarray, mean: np.float64, std: np.float64
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Transform parameter to actual score prediction.
 
         Parameters
@@ -506,77 +503,58 @@ class ZSD(BaseModel):
             Predicted score
         """
         exp_prob = self._logit_transform(param)
-        z_score = self._z_inverse(exp_prob)
+        z_score = stats.norm.ppf(exp_prob)
         return np.asarray(mean + std * z_score)
-
-    def _z_inverse(self, prob: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-        """Calculate inverse of standard normal CDF.
-
-        Parameters
-        ----------
-        prob : Union[float, np.ndarray]
-            Probability value(s)
-
-        Returns:
-        -------
-        Union[float, np.ndarray]
-            Z-score(s)
-        """
-        return stats.norm.ppf(prob)
-
-    def _logit_transform(self, x: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
-        """Apply logistic transformation with numerical stability.
-
-        Parameters
-        ----------
-        x : Union[float, np.ndarray]
-            Input value(s)
-
-        Returns:
-        -------
-        Union[float, np.ndarray]
-            Transformed value(s)
-        """
-        # Clip values to avoid overflow
-        x_clipped = np.clip(x, -700, 700)  # exp(700) is close to float max
-        return 1 / (1 + np.exp(-x_clipped))
 
     def _calculate_scoring_statistics(self) -> None:
         """Calculate and store scoring statistics for home and away teams."""
         # Calculate all statistics in one pass using numpy
         home_stats: np.ndarray = np.array(
-            [np.mean(self.home_goals_), np.std(self.home_goals_, ddof=1)]
+            [np.mean(self.home_goals), np.std(self.home_goals, ddof=1)]
         )
         away_stats: np.ndarray = np.array(
-            [np.mean(self.away_goals_), np.std(self.away_goals_, ddof=1)]
+            [np.mean(self.away_goals), np.std(self.away_goals, ddof=1)]
         )
 
         # Unpack results
-        self.mean_home_score_: np.float64 = home_stats[0]
-        self.std_home_score_: np.float64 = home_stats[1]
-        self.mean_away_score_: np.float64 = away_stats[0]
-        self.std_away_score_: np.float64 = away_stats[1]
+        self.mean_home_score: np.float64 = home_stats[0]
+        self.std_home_score: np.float64 = home_stats[1]
+        self.mean_away_score: np.float64 = away_stats[0]
+        self.std_away_score: np.float64 = away_stats[1]
 
         # Validate statistics
-        if not (self.std_home_score_ > 0 and self.std_away_score_ > 0):
+        if not (self.std_home_score > 0 and self.std_away_score > 0):
             raise ValueError(
                 "Invalid scoring statistics: zero or negative standard deviation"
             )
 
-    def _get_initial_params(self) -> np.ndarray:
-        """Generate initial parameters, incorporating any provided values.
+    def get_params(self) -> dict:
+        """Get the current parameters of the model.
 
         Returns:
         -------
-        np.ndarray
-            Complete parameter vector
-
-        Raises:
-        ------
-        ValueError
-            If parameters are invalid or don't match teams
+        dict
+            Dictionary containing model parameters
         """
-        return np.random.normal(0, 0.1, 2 * self.n_teams_ + 2)
+        return {
+            "teams": self.teams,
+            "team_map": self.team_map,
+            "params": self.params,
+            "is_fitted": self.is_fitted,
+        }
+
+    def set_params(self, params: dict) -> None:
+        """Set parameters for the model.
+
+        Parameters
+        ----------
+        params : dict
+            Dictionary containing model parameters, as returned by get_params()
+        """
+        self.teams = params["teams"]
+        self.team_map = params["team_map"]
+        self.params = params["params"]
+        self.is_fitted = params["is_fitted"]
 
     def get_team_ratings(self) -> pd.DataFrame:
         """Get team ratings as a DataFrame.
@@ -588,25 +566,9 @@ class ZSD(BaseModel):
         """
         self._check_is_fitted()
 
-        home_ratings = self.params_[: self.n_teams_]
-        away_ratings = self.params_[self.n_teams_ : 2 * self.n_teams_]
+        home_ratings = self.params[: self.n_teams]
+        away_ratings = self.params[self.n_teams : 2 * self.n_teams]
 
         return pd.DataFrame(
-            {"team": self.teams_, "home": home_ratings, "away": away_ratings}
+            {"team": self.teams, "home": home_ratings, "away": away_ratings}
         ).set_index("team")
-
-    def get_params(self) -> dict:
-        """Get model parameters."""
-        return {
-            "teams": self.teams_,
-            "team_map": self.team_map_,
-            "params": self.params_,
-            "is_fitted": self.is_fitted_,
-        }
-
-    def set_params(self, params: dict) -> None:
-        """Set model parameters."""
-        self.teams_ = params["teams"]
-        self.team_map_ = params["team_map"]
-        self.params_ = params["params"]
-        self.is_fitted_ = params["is_fitted"]

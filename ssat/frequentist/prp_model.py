@@ -22,26 +22,24 @@ class PRP(ZSD):
 
     Attributes:
     ----------
-    teams_ : np.ndarray
+    teams : np.ndarray
         Unique team identifiers
-    n_teams_ : int
+    n_teams : int
         Number of teams in the dataset
-    team_map_ : Dict[str, int]
+    team_map : Dict[str, int]
         Mapping of team names to indices
-    home_idx_ : np.ndarray
+    home_idx : np.ndarray
         Indices of home teams
-    away_idx_ : np.ndarray
+    away_idx : np.ndarray
         Indices of away teams
-    weights_ : np.ndarray
+    weights : np.ndarray
         Weights for rating optimization
-    match_weights_ : np.ndarray
-        Weights for spread prediction
-    is_fitted_ : bool
+    is_fitted : bool
         Whether the model has been fitted
-    params_ : np.ndarray
+    params : np.ndarray
         Optimized model parameters after fitting
-        [0:n_teams_] - Offensive ratings
-        [n_teams_:2*n_teams_] - Defensive ratings
+        [0:n_teams] - Offensive ratings
+        [n_teams:2*n_teams] - Defensive ratings
         [-2:] - Home/away adjustment factors
     """
 
@@ -80,7 +78,7 @@ class PRP(ZSD):
             Dict with 'home' and 'away' predicted scores
         """
         if factors is None:
-            factors = self.params_[-2:]
+            factors = self.params[-2:]
 
         ratings = self._get_team_ratings(
             home_idx, away_idx, offense_ratings, defense_ratings
@@ -130,7 +128,7 @@ class PRP(ZSD):
         """
         if offense_ratings is None and defense_ratings is None:
             offense_ratings, defense_ratings = np.split(
-                self.params_[: 2 * self.n_teams_], 2
+                self.params[: 2 * self.n_teams], 2
             )
 
         assert offense_ratings is not None and defense_ratings is not None, (
@@ -138,7 +136,7 @@ class PRP(ZSD):
         )
 
         if home_idx is None:
-            home_idx, away_idx = self.home_idx_, self.away_idx_
+            home_idx, away_idx = self.home_idx, self.away_idx
 
         return {
             "home_offense": offense_ratings[home_idx],
@@ -154,7 +152,7 @@ class PRP(ZSD):
         defense_ratings: np.ndarray,
         avg_score: float,
         factor: float = 0.5,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Calculate score prediction.
 
         Parameters
@@ -189,12 +187,12 @@ class PRP(ZSD):
         """
         self._check_is_fitted()
 
-        offense_ratings = self.params_[: self.n_teams_]
-        defense_ratings = self.params_[self.n_teams_ : 2 * self.n_teams_]
+        offense_ratings = self.params[: self.n_teams]
+        defense_ratings = self.params[self.n_teams : 2 * self.n_teams]
 
         return pd.DataFrame(
             {
-                "team": self.teams_,
+                "team": self.teams,
                 "offense": offense_ratings,
                 "defense": defense_ratings,
             }
@@ -203,9 +201,10 @@ class PRP(ZSD):
     def fit(
         self,
         X: pd.DataFrame,
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        Z: Optional[pd.DataFrame] = None,
+        y: Union[np.ndarray, pd.Series],
+        Z: pd.DataFrame,
         weights: Optional[np.ndarray] = None,
+        **kwargs,
     ) -> "PRP":
         """Fit the PRP model.
 
@@ -215,26 +214,22 @@ class PRP(ZSD):
             DataFrame containing match data with two columns:
             - First column: Home team names (string)
             - Second column: Away team names (string)
-            If y is None, X must have a third column with goal differences.
-        y : Optional[Union[np.ndarray, pd.Series]], default=None
-            Goal differences (home - away). If provided, this will be used instead of
-            the third column in X.
-        Z : Optional[pd.DataFrame], default=None
+        y : Union[np.ndarray, pd.Series]
+            Goal differences (home - away).
+        Z : pd.DataFrame
             Additional data for the model, such as home_goals and away_goals.
             No column name checking is performed, only dimension validation.
         weights : Optional[np.ndarray], default=None
             Weights for rating optimization
+        **kwargs : dict
+            Additional optimization parameters (ftol, maxiter, etc.)
 
         Returns:
         -------
         self : PRP
             Fitted model
         """
-        # Set weights
-        n_matches = len(X)
-        self.weights_ = np.ones(n_matches) if weights is None else weights
-
         # Fit the model
-        super().fit(X, y, Z)
+        super().fit(X, y, Z, weights, **kwargs)
 
         return self

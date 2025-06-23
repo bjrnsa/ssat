@@ -102,7 +102,7 @@ class Skellam(Poisson):
         X: Union[pd.DataFrame, np.ndarray],
         Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         point_spread: int = 0,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Generate predictions for new data.
 
         For Skellam model, this returns predicted goal differences (home - away).
@@ -179,7 +179,7 @@ class Skellam(Poisson):
         include_draw: bool = True,
         outcome: Optional[str] = None,
         threshold: float = 0.5,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Generate probability predictions for new data.
 
         Parameters

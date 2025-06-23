@@ -49,14 +49,15 @@ class GSSD(BaseModel):
     def __init__(self) -> None:
         """Initialize GSSD model."""
         super().__init__()
-        self.is_fitted_ = False
+        self.is_fitted = False
 
     def fit(
         self,
-        X: pd.DataFrame,
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
-        Z: Optional[pd.DataFrame] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[np.ndarray, pd.Series],
+        Z: Union[pd.DataFrame, np.ndarray],
         weights: Optional[np.ndarray] = None,
+        **kwargs,
     ) -> "GSSD":
         """Fit the GSSD model.
 
@@ -66,111 +67,83 @@ class GSSD(BaseModel):
             DataFrame containing match data with two columns:
             - First column: Home team names (string)
             - Second column: Away team names (string)
-            If y is None, X must have a third column with goal differences.
-        y : Optional[Union[np.ndarray, pd.Series]], default=None
-            Goal differences (home - away). If provided, this will be used instead of
-            the third column in X.
-        Z : Optional[pd.DataFrame], default=None
+        y : Union[np.ndarray, pd.Series]
+            Goal differences (home - away).
+        Z : Union[pd.DataFrame, np.ndarray]
             Additional data for the model, such as home_goals and away_goals.
             No column name checking is performed, only dimension validation.
         weights : Optional[np.ndarray], default=None
             Weights for rating optimization
+        **kwargs : dict
+            Additional optimization parameters (ftol, maxiter, etc.)
 
         Returns:
         -------
         self : GSSD
             Fitted model
         """
-        try:
-            # Validate input dimensions and types
-            self._validate_X(X)
+        # Validate input dimensions and types
+        self._validate_X(X)
+        self._validate_Z(X, Z, True)
 
-            # Validate Z is provided and has required dimensions
-            if Z is None:
-                raise ValueError(
-                    "Z must be provided with home_goals and away_goals data"
-                )
-            if len(Z) != len(X):
-                raise ValueError("Z must have the same number of rows as X")
+        # Extract team data using helper method
+        self.home_team, self.away_team = self._extract_teams(X)
 
-            # Extract team data (first two columns)
-            self.home_team_ = X.iloc[:, 0].to_numpy()
-            self.away_team_ = X.iloc[:, 1].to_numpy()
+        # Handle goal difference (y)
+        self.goal_diff = np.asarray(y)
 
-            # Handle goal difference (y)
-            if y is not None:
-                self.spread_ = np.asarray(y)
-            elif X.shape[1] >= 3:
-                self.spread_ = X.iloc[:, 2].to_numpy()
-            else:
-                raise ValueError(
-                    "Either y or a third column in X with goal differences must be provided"
-                )
+        # Extract home_goals and away_goals from Z
+        if isinstance(Z, np.ndarray):
+            self.home_goals = Z[:, 0]
+            self.away_goals = Z[:, 1]
+        else:
+            self.home_goals = Z.iloc[:, 0].to_numpy()
+            self.away_goals = Z.iloc[:, 1].to_numpy()
 
-            # Validate goal difference
-            if not np.issubdtype(self.spread_.dtype, np.number):
-                raise ValueError("Goal differences must be numeric")
+        # Team setup
+        self.teams = np.unique(np.concatenate([self.home_team, self.away_team]))
+        self.n_teams = len(self.teams)
+        self.team_map = {team: idx for idx, team in enumerate(self.teams)}
 
-            # Extract home_goals and away_goals from Z
-            self.home_goals_ = Z.iloc[:, 0].to_numpy()
-            self.away_goals_ = Z.iloc[:, 1].to_numpy()
+        # Get team indices using helper method
+        self.home_idx, self.away_idx = self._get_team_indices(
+            self.home_team, self.away_team
+        )
 
-            # Team setup
-            self.teams_ = np.unique(np.concatenate([self.home_team_, self.away_team_]))
-            self.n_teams_ = len(self.teams_)
-            self.team_map_ = {team: idx for idx, team in enumerate(self.teams_)}
+        # Set weights
+        n_matches = len(self.goal_diff)
+        self.weights = np.ones(n_matches) if weights is None else weights
 
-            # Create team indices
-            self.home_idx_ = np.array(
-                [self.team_map_[team] for team in self.home_team_]
-            )
-            self.away_idx_ = np.array(
-                [self.team_map_[team] for team in self.away_team_]
-            )
+        # Calculate team statistics
+        self._calculate_team_statistics()
 
-            # Set weights
-            n_matches = len(X)
-            self.weights_ = np.ones(n_matches) if weights is None else weights
+        # Initialize and optimize parameters
+        self._init_parameters()
+        result = self._optimize_parameters(**kwargs)
 
-            # Calculate team statistics
-            self._calculate_team_statistics(X)
+        # Store model parameters
+        self.intercept = result[0]
+        self.pfh_coef = result[1]
+        self.pah_coef = result[2]
+        self.pfa_coef = result[3]
+        self.paa_coef = result[4]
 
-            # Prepare features and fit model
-            features = np.column_stack((self.pfh_, self.pah_, self.pfa_, self.paa_))
-            initial_guess = np.array([0.1, 1.0, 1.0, -1.0, -1.0])
-            result = minimize(
-                self._sse_function,
-                initial_guess,
-                method="L-BFGS-B",
-                options={"ftol": 1e-10, "maxiter": 200},
-            )
+        # Calculate spread error
+        features = np.column_stack((self.pfh, self.pah, self.pfa, self.paa))
+        predictions = self._get_predictions(features)
+        residuals = self.goal_diff - predictions
+        sse = np.sum((residuals**2))
+        self.spread_error_ = np.sqrt(sse / (len(self.goal_diff) - 5))
 
-            # Store model parameters
-            self.const_ = result.x[0]
-            self.pfh_coef_ = result.x[1]
-            self.pah_coef_ = result.x[2]
-            self.pfa_coef_ = result.x[3]
-            self.paa_coef_ = result.x[4]
-
-            # Calculate spread error
-            predictions = self._get_predictions(features)
-            residuals = self.spread_ - predictions
-            sse = np.sum((residuals**2))
-            self.spread_error_ = np.sqrt(sse / (X.shape[0] - X.shape[1]))
-
-            self.is_fitted_ = True
-            return self
-
-        except Exception as e:
-            self.is_fitted_ = False
-            raise ValueError(f"Model fitting failed: {str(e)}") from e
+        self.is_fitted = True
+        return self
 
     def predict(
         self,
-        X: pd.DataFrame,
-        Z: Optional[pd.DataFrame] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         point_spread: int = 0,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Predict point spreads for matches.
 
         Parameters
@@ -190,42 +163,45 @@ class GSSD(BaseModel):
         np.ndarray
             Predicted point spreads (goal differences)
         """
-        self._check_is_fitted()
-        self._validate_X(X, fit=False)
+        if not self.is_fitted:
+            raise ValueError("Model must be fit before making predictions")
 
-        home_teams = X.iloc[:, 0].to_numpy()
-        away_teams = X.iloc[:, 1].to_numpy()
+        # Extract teams and get indices using helper methods
+        home_teams, away_teams = self._extract_teams(X)
+        home_idx, away_idx = self._get_team_indices(home_teams, away_teams)
 
-        predicted_spreads = np.zeros(len(X))
+        # Get team ratings vectorially
+        team_ratings_array = np.array([self.team_ratings[team] for team in self.teams])
 
-        for i, (home_team, away_team) in enumerate(zip(home_teams, away_teams)):
-            # Validate teams
-            self._validate_teams([home_team, away_team])
+        home_off = team_ratings_array[home_idx, 0]  # pfh for home teams
+        home_def = team_ratings_array[home_idx, 1]  # pah for home teams
+        away_off = team_ratings_array[away_idx, 2]  # pfa for away teams
+        away_def = team_ratings_array[away_idx, 3]  # paa for away teams
 
-            # Get team ratings
-            home_off, home_def = self.team_ratings_[home_team][:2]
-            away_off, away_def = self.team_ratings_[away_team][2:]
+        # Calculate all predicted spreads vectorially
+        predicted_spreads = (
+            self.intercept
+            + home_off * self.pfh_coef
+            + home_def * self.pah_coef
+            + away_off * self.pfa_coef
+            + away_def * self.paa_coef
+        ) + point_spread
 
-            # Calculate spread
-            predicted_spreads[i] = (
-                self.const_
-                + home_off * self.pfh_coef_
-                + home_def * self.pah_coef_
-                + away_off * self.pfa_coef_
-                + away_def * self.paa_coef_
-            )
-
-        return predicted_spreads
+        return self._format_predictions(
+            X,
+            predicted_spreads,
+            col_names=["goal_diff"],
+        )
 
     def predict_proba(
         self,
-        X: pd.DataFrame,
-        Z: Optional[pd.DataFrame] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         point_spread: int = 0,
         include_draw: bool = True,
         outcome: Optional[str] = None,
         threshold: float = 0.5,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Predict match outcome probabilities.
 
         Parameters
@@ -253,67 +229,52 @@ class GSSD(BaseModel):
             If include_draw=True: [home, draw, away]
             If include_draw=False: [home, away]
         """
-        self._check_is_fitted()
-        self._validate_X(X, fit=False)
+        if not self.is_fitted:
+            raise ValueError("Model must be fit before making predictions")
 
-        home_teams = X.iloc[:, 0].to_numpy()
-        away_teams = X.iloc[:, 1].to_numpy()
+        if outcome not in [None, "home", "away", "draw"]:
+            raise ValueError("outcome must be None, 'home', 'away', or 'draw'")
 
-        if outcome is None:
-            n_classes = 3 if include_draw else 2
-            probabilities = np.zeros((len(X), n_classes))
+        if not include_draw and outcome == "draw":
+            raise ValueError("Cannot predict draw when include_draw=False")
+
+        predictions = self.predict(X, Z, point_spread=0).to_numpy().reshape(-1, 1)
+        thresholds = np.array([point_spread + threshold, -point_spread - threshold])
+        thresholds = np.tile(thresholds, (len(predictions), 1))
+
+        if include_draw:
+            probs = stats.norm.cdf(thresholds, predictions, self.spread_error_)
+            home_probs = 1 - probs[:, 0]
+            draw_probs = probs[:, 0] - probs[:, 1]
+            away_probs = probs[:, 1]
         else:
-            probabilities = np.zeros((len(X),))
-
-        for i, (home_team, away_team) in enumerate(zip(home_teams, away_teams)):
-            # Validate teams
-            self._validate_teams([home_team, away_team])
-
-            # Get team ratings
-            home_off, home_def = self.team_ratings_[home_team][:2]
-            away_off, away_def = self.team_ratings_[away_team][2:]
-
-            # Calculate spread
-            predicted_spread = (
-                self.const_
-                + home_off * self.pfh_coef_
-                + home_def * self.pah_coef_
-                + away_off * self.pfa_coef_
-                + away_def * self.paa_coef_
+            home_probs = 1 - stats.norm.cdf(
+                point_spread, predictions, self.spread_error_
             )
+            away_probs = 1 - home_probs
 
-            # Calculate probabilities
-            if include_draw:
-                thresholds = np.array(
-                    [point_spread + threshold, -point_spread - threshold]
-                )
-                probs = stats.norm.cdf(thresholds, predicted_spread, self.spread_error_)
-                prob_home, prob_draw, prob_away = (
-                    1 - probs[0],
-                    probs[0] - probs[1],
-                    probs[1],
-                )
-            else:
-                prob_home = 1 - stats.norm.cdf(
-                    point_spread, predicted_spread, self.spread_error_
-                )
-                prob_home, prob_away = prob_home, 1 - prob_home
+        # Handle specific outcome requests
+        if outcome == "home":
+            return self._format_predictions(X, home_probs, col_names=["home"])
+        elif outcome == "away":
+            return self._format_predictions(X, away_probs, col_names=["away"])
+        elif outcome == "draw":
+            return self._format_predictions(X, draw_probs, col_names=["draw"])
 
-            if outcome is not None:
-                if outcome == "home":
-                    probabilities[i] = prob_home
-                elif outcome == "away":
-                    probabilities[i] = prob_away
-                elif outcome == "draw":
-                    probabilities[i] = prob_draw
-            else:
-                if include_draw:
-                    probabilities[i] = [prob_home, prob_draw, prob_away]
-                else:
-                    probabilities[i] = [prob_home, prob_away]
-        if outcome:
-            return probabilities.reshape(-1)
-        return probabilities
+        # Handle include_draw parameter
+        if include_draw:
+            # Return all three probabilities
+            result = np.stack([home_probs, draw_probs, away_probs]).T
+            col_names = ["home", "draw", "away"]
+        else:
+            # Return only home/away, renormalized
+            home_away_sum = home_probs + away_probs
+            home_probs_norm = home_probs / home_away_sum
+            away_probs_norm = away_probs / home_away_sum
+            result = np.stack([home_probs_norm, away_probs_norm]).T
+            col_names = ["home", "away"]
+
+        return self._format_predictions(X, result, col_names=col_names)
 
     def get_params(self) -> dict:
         """Get the current parameters of the model.
@@ -324,13 +285,13 @@ class GSSD(BaseModel):
             Dictionary containing model parameters
         """
         return {
-            "intercept": self.intercept_,
-            "pfh_coef": self.pfh_coef_,
-            "pah_coef": self.pah_coef_,
-            "pfa_coef": self.pfa_coef_,
-            "paa_coef": self.paa_coef_,
-            "params": self.team_ratings_,
-            "is_fitted": self.is_fitted_,
+            "intercept": self.intercept,
+            "pfh_coef": self.pfh_coef,
+            "pah_coef": self.pah_coef,
+            "pfa_coef": self.pfa_coef,
+            "paa_coef": self.paa_coef,
+            "params": self.team_ratings,
+            "is_fitted": self.is_fitted,
         }
 
     def set_params(self, params: dict) -> None:
@@ -341,13 +302,76 @@ class GSSD(BaseModel):
         params : dict
             Dictionary containing model parameters, as returned by get_params()
         """
-        self.intercept_ = params["intercept"]
-        self.pfh_coef_ = params["pfh_coef"]
-        self.pah_coef_ = params["pah_coef"]
-        self.pfa_coef_ = params["pfa_coef"]
-        self.paa_coef_ = params["paa_coef"]
-        self.team_ratings_ = params["params"]
-        self.is_fitted_ = params["is_fitted"]
+        self.intercept = params["intercept"]
+        self.pfh_coef = params["pfh_coef"]
+        self.pah_coef = params["pah_coef"]
+        self.pfa_coef = params["pfa_coef"]
+        self.paa_coef = params["paa_coef"]
+        self.team_ratings = params["params"]
+        self.is_fitted = params["is_fitted"]
+
+    def get_team_ratings(self) -> pd.DataFrame:
+        """Get team ratings as a DataFrame.
+
+        Returns:
+        -------
+        pd.DataFrame
+            DataFrame with team ratings and model coefficients
+        """
+        self._check_is_fitted()
+
+        # Get team ratings
+        ratings_df = pd.DataFrame(
+            self.team_ratings, index=["pfh", "pah", "pfa", "paa"]
+        ).T
+
+        # Add coefficients as a new row
+        coeffs = {
+            "pfh": self.pfh_coef,
+            "pah": self.pah_coef,
+            "pfa": self.pfa_coef,
+            "paa": self.paa_coef,
+        }
+        ratings_df.loc["Coefficients"] = pd.Series(coeffs)
+        ratings_df.loc["Intercept"] = self.intercept
+
+        return ratings_df.round(2)
+
+    def _init_parameters(self) -> None:
+        """Initialize model parameters with default values."""
+        self.initial_params = np.array([0.1, 1.0, 1.0, -1.0, -1.0])
+
+    def _optimize_parameters(self, **kwargs) -> pd.DataFrame:
+        """Optimize model parameters with fallback methods.
+
+        Parameters
+        ----------
+        **kwargs : dict
+            Additional optimization parameters (ftol, maxiter, etc.)
+
+        Returns:
+        -------
+        np.ndarray
+            Optimized parameters [intercept, pfh_coef, pah_coef, pfa_coef, paa_coef]
+        """
+        # Default optimization options
+        default_options = {"ftol": 1e-8, "maxiter": 500}
+        options = {**default_options, **kwargs}
+        methods = ["L-BFGS-B", "SLSQP"]
+
+        # Try optimization methods in sequence
+        for method in methods:
+            result = minimize(
+                self._sse_function,
+                self.initial_params,
+                method=method,
+                options=options,
+            )
+            if result.success:
+                return result.x
+
+        # If no method succeeded, return the last result anyway
+        return result.x
 
     def _sse_function(self, parameters: np.ndarray) -> float:
         """Calculate sum of squared errors for parameter optimization.
@@ -367,19 +391,19 @@ class GSSD(BaseModel):
         # Vectorized calculation of predictions
         predictions = (
             intercept
-            + pfh_coef * self.pfh_
-            + pah_coef * self.pah_
-            + pfa_coef * self.pfa_
-            + paa_coef * self.paa_
+            + pfh_coef * self.pfh
+            + pah_coef * self.pah
+            + pfa_coef * self.pfa
+            + paa_coef * self.paa
         )
 
         # Calculate weighted squared errors
-        errors = self.spread_ - predictions
-        sse = np.sum(self.weights_ * (errors**2))
+        errors = self.goal_diff - predictions
+        sse = np.sum(self.weights * (errors**2))
 
         return sse
 
-    def _get_predictions(self, features: np.ndarray) -> np.ndarray:
+    def _get_predictions(self, features: np.ndarray) -> pd.DataFrame:
         """Calculate predictions using current model parameters.
 
         Parameters
@@ -393,28 +417,22 @@ class GSSD(BaseModel):
             Predicted values.
         """
         return (
-            self.const_
-            + self.pfh_coef_ * features[:, 0]
-            + self.pah_coef_ * features[:, 1]
-            + self.pfa_coef_ * features[:, 2]
-            + self.paa_coef_ * features[:, 3]
+            self.intercept
+            + self.pfh_coef * features[:, 0]
+            + self.pah_coef * features[:, 1]
+            + self.pfa_coef * features[:, 2]
+            + self.paa_coef * features[:, 3]
         )
 
-    def _calculate_team_statistics(self, X: pd.DataFrame) -> None:
-        """Calculate and store all team-related statistics.
-
-        Parameters
-        ----------
-        X : pd.DataFrame
-            DataFrame containing match data
-        """
+    def _calculate_team_statistics(self) -> None:
+        """Calculate and store all team-related statistics."""
         # Create a temporary DataFrame for calculations
         df = pd.DataFrame(
             {
-                "home_team": self.home_team_,
-                "away_team": self.away_team_,
-                "home_goals": self.home_goals_,
-                "away_goals": self.away_goals_,
+                "home_team": self.home_team,
+                "away_team": self.away_team,
+                "home_goals": self.home_goals,
+                "away_goals": self.away_goals,
             }
         )
 
@@ -427,16 +445,16 @@ class GSSD(BaseModel):
         )
 
         # Store transformed statistics
-        self.pfh_ = df.groupby("home_team")["home_goals"].transform("mean").to_numpy()
-        self.pah_ = df.groupby("home_team")["away_goals"].transform("mean").to_numpy()
-        self.pfa_ = df.groupby("away_team")["away_goals"].transform("mean").to_numpy()
-        self.paa_ = df.groupby("away_team")["home_goals"].transform("mean").to_numpy()
+        self.pfh = df.groupby("home_team")["home_goals"].transform("mean").to_numpy()
+        self.pah = df.groupby("home_team")["away_goals"].transform("mean").to_numpy()
+        self.pfa = df.groupby("away_team")["away_goals"].transform("mean").to_numpy()
+        self.paa = df.groupby("away_team")["home_goals"].transform("mean").to_numpy()
 
         # Create team ratings dictionary
-        self.team_ratings_ = {}
-        for team in self.teams_:
+        self.team_ratings = {}
+        for team in self.teams:
             if team in home_stats.index and team in away_stats.index:
-                self.team_ratings_[team] = np.array(
+                self.team_ratings[team] = np.array(
                     [
                         home_stats.loc[team, "home_goals"],
                         home_stats.loc[team, "away_goals"],
@@ -446,51 +464,24 @@ class GSSD(BaseModel):
                 )
             elif team in home_stats.index:
                 # Team only played home games
-                self.team_ratings_[team] = np.array(
+                self.team_ratings[team] = np.array(
                     [
                         home_stats.loc[team, "home_goals"],
                         home_stats.loc[team, "away_goals"],
-                        0.0,  # Default value for missing away offensive rating
-                        0.0,  # Default value for missing away defensive rating
+                        0.0,
+                        0.0,
                     ]
                 )
             elif team in away_stats.index:
                 # Team only played away games
-                self.team_ratings_[team] = np.array(
+                self.team_ratings[team] = np.array(
                     [
-                        0.0,  # Default value for missing home offensive rating
-                        0.0,  # Default value for missing home defensive rating
+                        0.0,
+                        0.0,
                         away_stats.loc[team, "away_goals"],
                         away_stats.loc[team, "home_goals"],
                     ]
                 )
             else:
                 # Team hasn't played any games (shouldn't happen with proper data)
-                self.team_ratings_[team] = np.zeros(4)
-
-    def get_team_ratings(self) -> pd.DataFrame:
-        """Get team ratings as a DataFrame.
-
-        Returns:
-        -------
-        pd.DataFrame
-            DataFrame with team ratings and model coefficients
-        """
-        self._check_is_fitted()
-
-        # Get team ratings
-        ratings_df = pd.DataFrame(
-            self.team_ratings_, index=["pfh", "pah", "pfa", "paa"]
-        ).T
-
-        # Add coefficients as a new row
-        coeffs = {
-            "pfh": self.pfh_coef_,
-            "pah": self.pah_coef_,
-            "pfa": self.pfa_coef_,
-            "paa": self.paa_coef_,
-        }
-        ratings_df.loc["Coefficients"] = pd.Series(coeffs)
-        ratings_df.loc["Intercept"] = self.const_
-
-        return ratings_df.round(2)
+                self.team_ratings[team] = np.zeros(4)

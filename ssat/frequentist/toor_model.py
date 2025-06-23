@@ -39,16 +39,17 @@ class TOOR(BradleyTerry):
     def __init__(self, home_advantage: float = 0.1) -> None:
         """Initialize TOOR model."""
         super().__init__(home_advantage=home_advantage)
-        self.home_advantage_ = home_advantage
-        self.home_team_coef_ = None
-        self.away_team_coef_ = None
+        self.home_advantage = home_advantage
+        self.home_team_coef = None
+        self.away_team_coef = None
 
     def fit(
         self,
-        X: pd.DataFrame,
-        y: Optional[Union[np.ndarray, pd.Series]] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        y: Union[np.ndarray, pd.Series],
         Z: Optional[pd.DataFrame] = None,
         weights: Optional[np.ndarray] = None,
+        **kwargs,
     ) -> "TOOR":
         """Fit the TOOR model.
 
@@ -58,61 +59,65 @@ class TOOR(BradleyTerry):
             DataFrame containing match data with two columns:
             - First column: Home team names (string)
             - Second column: Away team names (string)
-            If y is None, X must have a third column with goal differences.
-        y : Optional[Union[np.ndarray, pd.Series]], default=None
-            Goal differences (home - away). If provided, this will be used instead of
-            the third column in X.
+        y : Union[np.ndarray, pd.Series]
+            Goal differences (home - away).
         Z : Optional[pd.DataFrame], default=None
             Additional data for the model, such as home_goals and away_goals.
             No column name checking is performed, only dimension validation.
         weights : Optional[np.ndarray], default=None
             Weights for rating optimization
+        **kwargs : dict
+            Additional optimization parameters (ftol, maxiter, etc.)
 
         Returns:
         -------
         self : TOOR
             Fitted model
         """
-        try:
-            # First fit the Bradley-Terry model to get team ratings
-            super().fit(X, y, Z, weights)
+        # First fit the Bradley-Terry model to get team ratings
+        super().fit(X, y, Z, weights, **kwargs)
 
-            # Optimize the three parameters using least squares
-            initial_guess = np.array([0.1, 1.0, -1.0])
+        # Optimize the three parameters using least squares with kwargs support
+        default_options = {"ftol": 1e-8, "maxiter": 500}
+        options = {**default_options, **kwargs}
+
+        initial_guess = np.array([0.1, 1.0, -1.0])
+        methods = ["L-BFGS-B", "SLSQP"]
+
+        # Try optimization methods in sequence
+        for method in methods:
             result = minimize(
                 self._sse_function,
                 initial_guess,
-                method="L-BFGS-B",
-                options={"ftol": 1e-10, "maxiter": 200},
+                method=method,
+                options=options,
             )
+            if result.success:
+                break
 
-            # Store the optimized coefficients
-            self.home_advantage_ = result.x[0]  # home advantage
-            self.home_team_coef_ = result.x[1]  # home team coefficient
-            self.away_team_coef_ = result.x[2]  # away team coefficient
+        # Store the optimized coefficients
+        self.home_advantage = result.x[0]  # home advantage
+        self.home_team_coef = result.x[1]  # home team coefficient
+        self.away_team_coef = result.x[2]  # away team coefficient
 
-            # Calculate spread error
-            predictions = (
-                self.home_advantage_
-                + self.home_team_coef_ * self.params_[self.home_idx_]
-                + self.away_team_coef_ * self.params_[self.away_idx_]
-            )
-            residuals = self.spread_ - predictions
-            sse = np.sum((residuals**2))
-            self.spread_error_ = np.sqrt(sse / (X.shape[0] - X.shape[1]))
+        # Calculate spread error
+        predictions = (
+            self.home_advantage
+            + self.home_team_coef * self.params[self.home_idx]
+            + self.away_team_coef * self.params[self.away_idx]
+        )
+        residuals = self.goal_diff - predictions
+        sse = np.sum((residuals**2))
+        self.spread_error_ = np.sqrt(sse / (len(self.goal_diff) - 3))
 
-            return self
-
-        except Exception as e:
-            self.is_fitted_ = False
-            raise ValueError(f"Model fitting failed: {str(e)}") from e
+        return self
 
     def predict(
         self,
-        X: pd.DataFrame,
-        Z: Optional[pd.DataFrame] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         point_spread: int = 0,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Predict point spreads for matches using team-specific coefficients.
 
         Parameters
@@ -127,44 +132,39 @@ class TOOR(BradleyTerry):
         point_spread : float, default=0.0
             Point spread adjustment
         """
-        self._check_is_fitted()
-        self._validate_X(X, fit=False)
+        if not self.is_fitted:
+            raise ValueError("Model must be fit before making predictions")
 
-        # Validate Z dimensions if provided
-        if Z is not None and len(Z) != len(X):
-            raise ValueError("Z must have the same number of rows as X")
+        # Extract teams and get indices using helper methods
+        home_teams, away_teams = self._extract_teams(X)
+        home_idx, away_idx = self._get_team_indices(home_teams, away_teams)
 
-        home_teams = X.iloc[:, 0].to_numpy()
-        away_teams = X.iloc[:, 1].to_numpy()
+        # Get team ratings vectorially
+        home_ratings = self.params[home_idx]
+        away_ratings = self.params[away_idx]
 
-        predicted_spreads = np.zeros(len(X))
+        # Calculate all predicted spreads vectorially using team-specific coefficients
+        predicted_spreads = (
+            self.home_advantage
+            + self.home_team_coef * home_ratings
+            + self.away_team_coef * away_ratings
+        ) + point_spread
 
-        for i, (home_team, away_team) in enumerate(zip(home_teams, away_teams)):
-            # Validate teams
-            self._validate_teams([home_team, away_team])
-
-            # Get team ratings
-            home_rating = self.params_[self.team_map_[home_team]]
-            away_rating = self.params_[self.team_map_[away_team]]
-
-            # Calculate predicted spread using team-specific coefficients
-            predicted_spreads[i] = (
-                self.home_advantage_
-                + self.home_team_coef_ * home_rating
-                + self.away_team_coef_ * away_rating
-            )
-
-        return predicted_spreads
+        return self._format_predictions(
+            X,
+            predicted_spreads,
+            col_names=["goal_diff"],
+        )
 
     def predict_proba(
         self,
-        X: pd.DataFrame,
-        Z: Optional[pd.DataFrame] = None,
+        X: Union[pd.DataFrame, np.ndarray],
+        Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         point_spread: int = 0,
         include_draw: bool = True,
         outcome: Optional[str] = None,
         threshold: float = 0.5,
-    ) -> np.ndarray:
+    ) -> pd.DataFrame:
         """Predict match outcome probabilities.
 
         Parameters
@@ -192,69 +192,52 @@ class TOOR(BradleyTerry):
             If include_draw=True: [home, draw, away]
             If include_draw=False: [home, away]
         """
-        self._check_is_fitted()
-        self._validate_X(X, fit=False)
+        if not self.is_fitted:
+            raise ValueError("Model must be fit before making predictions")
 
-        # Validate Z dimensions if provided
-        if Z is not None and len(Z) != len(X):
-            raise ValueError("Z must have the same number of rows as X")
+        if outcome not in [None, "home", "away", "draw"]:
+            raise ValueError("outcome must be None, 'home', 'away', or 'draw'")
 
-        home_teams = X.iloc[:, 0].to_numpy()
-        away_teams = X.iloc[:, 1].to_numpy()
+        if not include_draw and outcome == "draw":
+            raise ValueError("Cannot predict draw when include_draw=False")
 
-        if outcome is None:
-            n_classes = 3 if include_draw else 2
-            probabilities = np.zeros((len(X), n_classes))
+        predictions = self.predict(X, Z, point_spread=0).to_numpy().reshape(-1, 1)
+        thresholds = np.array([point_spread + threshold, -point_spread - threshold])
+        thresholds = np.tile(thresholds, (len(predictions), 1))
+
+        if include_draw:
+            probs = stats.norm.cdf(thresholds, predictions, self.spread_error_)
+            home_probs = 1 - probs[:, 0]
+            draw_probs = probs[:, 0] - probs[:, 1]
+            away_probs = probs[:, 1]
         else:
-            probabilities = np.zeros((len(X),))
-
-        for i, (home_team, away_team) in enumerate(zip(home_teams, away_teams)):
-            # Validate teams
-            self._validate_teams([home_team, away_team])
-
-            # Get team ratings
-            home_rating = self.params_[self.team_map_[home_team]]
-            away_rating = self.params_[self.team_map_[away_team]]
-
-            # Calculate predicted spread using team-specific coefficients
-            predicted_spread = (
-                self.home_advantage_
-                + self.home_team_coef_ * home_rating
-                + self.away_team_coef_ * away_rating
+            home_probs = 1 - stats.norm.cdf(
+                point_spread, predictions, self.spread_error_
             )
+            away_probs = 1 - home_probs
 
-            # Calculate probabilities
-            if include_draw:
-                thresholds = np.array(
-                    [point_spread + threshold, -point_spread - threshold]
-                )
-                probs = stats.norm.cdf(thresholds, predicted_spread, self.spread_error_)
-                prob_home, prob_draw, prob_away = (
-                    1 - probs[0],
-                    probs[0] - probs[1],
-                    probs[1],
-                )
-            else:
-                prob_home = 1 - stats.norm.cdf(
-                    point_spread, predicted_spread, self.spread_error_
-                )
-                prob_home, prob_away = prob_home, 1 - prob_home
+        # Handle specific outcome requests
+        if outcome == "home":
+            return self._format_predictions(X, home_probs, col_names=["home"])
+        elif outcome == "away":
+            return self._format_predictions(X, away_probs, col_names=["away"])
+        elif outcome == "draw":
+            return self._format_predictions(X, draw_probs, col_names=["draw"])
 
-            if outcome is not None:
-                if outcome == "home":
-                    probabilities[i] = prob_home
-                elif outcome == "away":
-                    probabilities[i] = prob_away
-                elif outcome == "draw":
-                    probabilities[i] = prob_draw
-            else:
-                if include_draw:
-                    probabilities[i] = [prob_home, prob_draw, prob_away]
-                else:
-                    probabilities[i] = [prob_home, prob_away]
-        if outcome:
-            return probabilities.reshape(-1)
-        return probabilities
+        # Handle include_draw parameter
+        if include_draw:
+            # Return all three probabilities
+            result = np.stack([home_probs, draw_probs, away_probs]).T
+            col_names = ["home", "draw", "away"]
+        else:
+            # Return only home/away, renormalized
+            home_away_sum = home_probs + away_probs
+            home_probs_norm = home_probs / home_away_sum
+            away_probs_norm = away_probs / home_away_sum
+            result = np.stack([home_probs_norm, away_probs_norm]).T
+            col_names = ["home", "away"]
+
+        return self._format_predictions(X, result, col_names=col_names)
 
     def get_params(self) -> dict:
         """Get the current parameters of the model.
@@ -265,11 +248,11 @@ class TOOR(BradleyTerry):
             Dictionary containing model parameters
         """
         return {
-            "home_advantage": self.home_advantage_,
-            "home_team_coef": self.home_team_coef_,
-            "away_team_coef": self.away_team_coef_,
-            "params": self.params_,
-            "is_fitted": self.is_fitted_,
+            "home_advantage": self.home_advantage,
+            "home_team_coef": self.home_team_coef,
+            "away_team_coef": self.away_team_coef,
+            "params": self.params,
+            "is_fitted": self.is_fitted,
         }
 
     def set_params(self, params: dict) -> None:
@@ -280,11 +263,11 @@ class TOOR(BradleyTerry):
         params : dict
             Dictionary containing model parameters, as returned by get_params()
         """
-        self.home_advantage_ = params["home_advantage"]
-        self.home_team_coef_ = params["home_team_coef"]
-        self.away_team_coef_ = params["away_team_coef"]
-        self.params_ = params["params"]
-        self.is_fitted_ = params["is_fitted"]
+        self.home_advantage = params["home_advantage"]
+        self.home_team_coef = params["home_team_coef"]
+        self.away_team_coef = params["away_team_coef"]
+        self.params = params["params"]
+        self.is_fitted = params["is_fitted"]
 
     def get_team_ratings(self) -> pd.DataFrame:
         """Get team ratings as a DataFrame with home and away coefficients.
@@ -297,12 +280,12 @@ class TOOR(BradleyTerry):
         self._check_is_fitted()
         df = pd.DataFrame(
             {
-                "home": self.params_[:-1] * self.home_team_coef_,
-                "away": self.params_[:-1] * self.away_team_coef_,
+                "home": self.params[:-1] * self.home_team_coef,
+                "away": self.params[:-1] * self.away_team_coef,
             },
             index=self.teams_,
         )
-        df.loc["Home Advantage"] = [self.home_advantage_, np.nan]
+        df.loc["Home Advantage"] = [self.home_advantage, np.nan]
         return df
 
     def _sse_function(self, parameters: np.ndarray) -> float:
@@ -321,17 +304,17 @@ class TOOR(BradleyTerry):
         home_adv, home_team_coef, away_team_coef = parameters
 
         # Get logistic ratings from Bradley-Terry optimization
-        logistic_ratings = self.params_[:-1]  # Exclude home advantage parameter
+        logistic_ratings = self.params[:-1]  # Exclude home advantage parameter
 
         # Calculate predictions
         predictions = (
             home_adv
-            + home_team_coef * logistic_ratings[self.home_idx_]
-            + away_team_coef * logistic_ratings[self.away_idx_]
+            + home_team_coef * logistic_ratings[self.home_idx]
+            + away_team_coef * logistic_ratings[self.away_idx]
         )
 
         # Calculate weighted squared errors
-        errors = self.spread_ - predictions
-        sse = np.sum(errors**2 * self.weights_)
+        errors = self.goal_diff - predictions
+        sse = np.sum(errors**2 * self.weights)
 
         return sse
