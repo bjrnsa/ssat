@@ -6,6 +6,7 @@ from .skellam_rng import (
     zero_inflated_skellam_rng_values,
     zero_inflated_skellam_rng_vec,
 )
+from .weights import dixon_coles_weights
 
 __all__ = [
     "rskellam",
@@ -15,4 +16,5 @@ __all__ = [
     "skellam_rng_values",
     "zero_inflated_skellam_rng_values",
     "zero_inflated_skellam_rng_vec",
+    "dixon_coles_weights",
 ]

@@ -40,7 +40,7 @@ import numpy as np
 import pandas as pd
 
 from ssat.bayesian.poisson_models import Poisson
-from ssat.stats.skellam_optim import qskellam
+from ssat.utils.skellam_optim import qskellam
 
 
 class Skellam(Poisson):

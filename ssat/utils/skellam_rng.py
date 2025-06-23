@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from ssat.stats.skellam_optim import qskellam
+from ssat.utils.skellam_optim import qskellam
 
 
 def skellam_rng_values(n, lambda1, lambda2):
