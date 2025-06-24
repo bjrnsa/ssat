@@ -112,6 +112,7 @@ class SSATModelComparisonApp(param.Parameterized):
     # Store training results
     model_results = param.DataFrame(default=None, doc="Model training results")
     model_metrics = param.DataFrame(default=None, doc="Model performance metrics")
+    prediction_results = param.DataFrame(default=None, doc="Model prediction results")
 
     def __init__(self, **params):
         """Initialize the SSAT Model Comparison App."""
@@ -334,23 +335,36 @@ class SSATModelComparisonApp(param.Parameterized):
             )
             return
 
-        # Simulate prediction generation
+        # Real prediction generation
         self.busy = True
         self.status_message = create_status_message(
             "info", get_status_message("predicting")
         )
 
-        # Simulate processing time
-        import time
+        try:
+            # Import prediction function
+            from ssat.apps.ssat_model_comparison.data import generate_predictions
 
-        time.sleep(0.5)
+            # Generate real predictions using trained models
+            self.prediction_results = generate_predictions(
+                data=self.filtered_data,
+                selected_models=self.selected_models,
+                model_results=None  # Use fallback prediction method for now
+            )
 
-        # Update status
-        self.predictions_generated = True
-        self.busy = False
-        self.status_message = create_status_message(
-            "success", get_status_message("predictions_complete")
-        )
+            # Update status
+            self.predictions_generated = True
+            self.status_message = create_status_message(
+                "success", get_status_message("predictions_complete")
+            )
+
+        except Exception as e:
+            self.status_message = create_status_message(
+                "error", f"Prediction generation failed: {e}"
+            )
+            self.predictions_generated = False
+        finally:
+            self.busy = False
 
     def on_export_results(self, event=None):
         """Handle export results button click."""

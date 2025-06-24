@@ -13,6 +13,57 @@ from ssat.app.config.ui_config import LAYOUT_CONFIG
 from ssat.app.utils.ui_helpers import get_sizing_mode
 
 
+def create_plot_card(
+    title: str, 
+    plot_component: pn.viewable.Viewable, 
+    explanation: str = None,
+    dark_theme: bool = False
+) -> pmui.Card:
+    """Create a card specifically for plot components.
+    
+    Args:
+        title: Card title
+        plot_component: Panel plot component (e.g., pn.pane.Matplotlib)
+        explanation: Optional explanation text
+        dark_theme: Whether to use dark theme styling
+        
+    Returns:
+        Styled card with plot
+    """
+    components = [plot_component]
+    
+    if explanation:
+        explanation_style = """
+        background: #f8f9fa; 
+        padding: 15px; 
+        border-radius: 8px; 
+        margin-top: 15px;
+        """
+        
+        if dark_theme:
+            explanation_style = """
+            background: #2e2e2e; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin-top: 15px;
+            color: #e0e0e0;
+            """
+        
+        explanation_html = f"""
+        <div style="{explanation_style}">
+            <p style="margin: 0; font-size: 13px; line-height: 1.6;">{explanation}</p>
+        </div>
+        """
+        components.append(pn.pane.HTML(explanation_html))
+    
+    return pmui.Card(
+        *components,
+        title=title,
+        margin=LAYOUT_CONFIG["card_spacing"],
+        sizing_mode=get_sizing_mode(),
+    )
+
+
 def create_status_card(app) -> pmui.Card:
     """Create a status display card.
 
@@ -156,7 +207,7 @@ def create_metrics_card(
 
     Args:
         title: Card title
-        data: Metrics data (placeholder for now)
+        data: Metrics data or plot component
         explanation: Whether to include metrics explanation
 
     Returns:
@@ -177,15 +228,19 @@ def create_metrics_card(
             sizing_mode=get_sizing_mode(),
         )
 
-    # Placeholder for actual metrics visualization
-    content_html = """
-    <div style="text-align: center; padding: 20px; background: #f0f8ff; border-radius: 8px;">
-        <h4 style="color: #1976D2; margin: 0 0 10px 0;">📊 Performance Metrics</h4>
-        <p style="margin: 0; color: #333;">Metrics visualization will appear here after model training.</p>
-    </div>
-    """
-
-    components = [pn.pane.HTML(content_html)]
+    # Handle both plot components and other data
+    if hasattr(data, '_repr_html_') or hasattr(data, 'object') or isinstance(data, pn.viewable.Viewable):
+        # This is a plot or Panel component
+        components = [data]
+    else:
+        # Fallback placeholder
+        content_html = """
+        <div style="text-align: center; padding: 20px; background: #f0f8ff; border-radius: 8px;">
+            <h4 style="color: #1976D2; margin: 0 0 10px 0;">📊 Performance Metrics</h4>
+            <p style="margin: 0; color: #333;">Metrics visualization will appear here after model training.</p>
+        </div>
+        """
+        components = [pn.pane.HTML(content_html)]
 
     if explanation:
         explanation_html = """
@@ -193,8 +248,10 @@ def create_metrics_card(
             <h5 style="color: #2E7D32; margin: 0 0 10px 0;">📈 Understanding Metrics</h5>
             <ul style="margin: 0; padding-left: 20px; color: #333; line-height: 1.6; font-size: 13px;">
                 <li><strong>Accuracy:</strong> Percentage of correct predictions (higher is better)</li>
-                <li><strong>MAE:</strong> Mean Absolute Error (lower is better)</li>
+                <li><strong>MAE:</strong> Mean Absolute Error for goal spreads (lower is better)</li>
                 <li><strong>Log-Likelihood:</strong> Model fit quality (less negative is better)</li>
+                <li><strong>Brier Score:</strong> Probability prediction accuracy (lower is better)</li>
+                <li><strong>RPS:</strong> Ranked probability score for ordered outcomes (lower is better)</li>
             </ul>
         </div>
         """
@@ -215,7 +272,7 @@ def create_predictions_card(
 
     Args:
         title: Card title
-        data: Predictions data (placeholder for now)
+        data: Predictions data or visualization component
         explanation: Whether to include predictions explanation
 
     Returns:
@@ -236,24 +293,29 @@ def create_predictions_card(
             sizing_mode=get_sizing_mode(),
         )
 
-    # Placeholder for actual predictions visualization
-    content_html = """
-    <div style="text-align: center; padding: 20px; background: #f0f8ff; border-radius: 8px;">
-        <h4 style="color: #1976D2; margin: 0 0 10px 0;">🔮 Prediction Analysis</h4>
-        <p style="margin: 0; color: #333;">Prediction visualizations will appear here after generating predictions.</p>
-    </div>
-    """
-
-    components = [pn.pane.HTML(content_html)]
+    # Handle both visualization components and other data
+    if hasattr(data, '_repr_html_') or hasattr(data, 'object') or isinstance(data, pn.viewable.Viewable):
+        # This is a visualization component (plot or tabs)
+        components = [data]
+    else:
+        # Fallback placeholder
+        content_html = """
+        <div style="text-align: center; padding: 20px; background: #f0f8ff; border-radius: 8px;">
+            <h4 style="color: #1976D2; margin: 0 0 10px 0;">🔮 Prediction Analysis</h4>
+            <p style="margin: 0; color: #333;">Prediction visualizations will appear here after generating predictions.</p>
+        </div>
+        """
+        components = [pn.pane.HTML(content_html)]
 
     if explanation:
         explanation_html = """
         <div style="background: #f0f8ff; padding: 15px; border-radius: 8px; margin-top: 15px;">
             <h5 style="color: #1976D2; margin: 0 0 10px 0;">🔮 Understanding Predictions</h5>
             <ul style="margin: 0; padding-left: 20px; color: #333; line-height: 1.6; font-size: 13px;">
-                <li><strong>Win Probabilities:</strong> Model confidence in each outcome (0-100%)</li>
+                <li><strong>Probability Heatmap:</strong> Win probabilities by team matchups (red = home favored)</li>
                 <li><strong>Goal Spreads:</strong> Expected goal difference (positive = home favored)</li>
-                <li><strong>Model Agreement:</strong> High consensus suggests reliable predictions</li>
+                <li><strong>Model Agreement:</strong> Low variance indicates reliable consensus</li>
+                <li><strong>Confidence:</strong> Higher agreement suggests more reliable predictions</li>
             </ul>
         </div>
         """

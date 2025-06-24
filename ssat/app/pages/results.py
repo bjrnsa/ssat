@@ -29,6 +29,8 @@ def create_results_page(app) -> pn.Column:
         app.param.models_trained,
         app.param.model_type,
         app.param.selected_models,
+        app.param.model_metrics,
+        app.param.dark_theme,
     )
 
     # Predictions analysis section
@@ -37,6 +39,8 @@ def create_results_page(app) -> pn.Column:
         app.param.predictions_generated,
         app.param.model_type,
         app.param.selected_models,
+        app.param.prediction_results,
+        app.param.dark_theme,
     )
 
     # Model comparison insights
@@ -56,7 +60,7 @@ def create_results_page(app) -> pn.Column:
 
 
 def _create_metrics_section(
-    models_trained: bool, model_type: str, selected_models
+    models_trained: bool, model_type: str, selected_models, model_metrics=None, dark_theme: bool = False
 ) -> pn.viewable.Viewable:
     """Create the performance metrics section.
 
@@ -64,6 +68,8 @@ def _create_metrics_section(
         models_trained: Whether models have been trained
         model_type: Current model type
         selected_models: List of selected models
+        model_metrics: DataFrame with model performance metrics
+        dark_theme: Whether to use dark theme
 
     Returns:
         Metrics card component
@@ -75,16 +81,35 @@ def _create_metrics_section(
             "analytics",
         )
 
-    # When models are trained, show metrics visualization placeholder
-    return create_metrics_card(
-        title="Performance Metrics",
-        data={"trained": True},  # Placeholder data
-        explanation=True,
-    )
+    # When models are trained, show real metrics visualization
+    from ssat.app.components.plots import create_performance_plot
+    
+    try:
+        # Create the performance plot
+        plot_figure = create_performance_plot(model_metrics, dark_theme=dark_theme)
+        plot_pane = pn.pane.Matplotlib(
+            plot_figure,
+            sizing_mode="stretch_width",
+            height=400
+        )
+        
+        return create_metrics_card(
+            title="Performance Metrics",
+            data=plot_pane,
+            explanation=True,
+        )
+    except Exception as e:
+        # Fallback to placeholder if plotting fails
+        error_content = f"Error creating performance plot: {str(e)}"
+        return create_placeholder_card(
+            "Performance Metrics",
+            error_content,
+            "analytics",
+        )
 
 
 def _create_predictions_section(
-    predictions_generated: bool, model_type: str, selected_models
+    predictions_generated: bool, model_type: str, selected_models, prediction_results=None, dark_theme: bool = False
 ) -> pn.viewable.Viewable:
     """Create the predictions analysis section.
 
@@ -92,6 +117,8 @@ def _create_predictions_section(
         predictions_generated: Whether predictions have been generated
         model_type: Current model type
         selected_models: List of selected models
+        prediction_results: DataFrame with prediction results
+        dark_theme: Whether to use dark theme
 
     Returns:
         Predictions card component
@@ -103,12 +130,48 @@ def _create_predictions_section(
             "insights",
         )
 
-    # When predictions are generated, show analysis visualization placeholder
-    return create_predictions_card(
-        title="Prediction Analysis",
-        data={"generated": True},  # Placeholder data
-        explanation=True,
-    )
+    # When predictions are generated, show real prediction visualizations
+    from ssat.app.components.plots import create_prediction_heatmap, create_model_agreement_plot
+    
+    try:
+        # Create prediction visualizations
+        heatmap_figure = create_prediction_heatmap(prediction_results, dark_theme=dark_theme)
+        agreement_figure = create_model_agreement_plot(prediction_results, dark_theme=dark_theme)
+        
+        # Create matplotlib panes
+        heatmap_pane = pn.pane.Matplotlib(
+            heatmap_figure,
+            sizing_mode="stretch_width",
+            height=400
+        )
+        
+        agreement_pane = pn.pane.Matplotlib(
+            agreement_figure,
+            sizing_mode="stretch_width",
+            height=300
+        )
+        
+        # Combine visualizations in tabs
+        prediction_tabs = pn.Tabs(
+            ("Probability Heatmap", heatmap_pane),
+            ("Model Agreement", agreement_pane),
+            sizing_mode="stretch_width"
+        )
+        
+        return create_predictions_card(
+            title="Prediction Analysis",
+            data=prediction_tabs,
+            explanation=True,
+        )
+        
+    except Exception as e:
+        # Fallback to placeholder if visualization fails
+        error_content = f"Error creating prediction visualizations: {str(e)}"
+        return create_placeholder_card(
+            "Prediction Analysis",
+            error_content,
+            "insights",
+        )
 
 
 def _create_insights_section(

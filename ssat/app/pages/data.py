@@ -19,6 +19,7 @@ def create_data_page(app) -> pn.Column:
     Returns:
         Column containing data explorer page components
     """
+
     # Data explorer section - use @pn.depends to avoid binding issues
     @pn.depends(app.param.data_loaded, app.param.filtered_data)
     def explorer_card(data_loaded, filtered_data):
@@ -99,9 +100,9 @@ def _create_data_explorer_section(
             pagination="remote",
             page_size=20,
             sizing_mode="stretch_width",
-            height=400
+            height=400,
         )
-        
+
         return create_info_card("Data Explorer", table, icon="table_view")
 
     except Exception as e:
