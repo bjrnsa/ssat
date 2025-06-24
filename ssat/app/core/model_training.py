@@ -19,13 +19,13 @@ from ssat.metrics import (
 
 def run_models(data, models, train_split, set_status_message) -> pd.DataFrame:
     """Train selected models on the provided data using proper SSAT model APIs.
-    
+
     Args:
         data: DataFrame with match data including home_team, away_team, home_goals, away_goals
         models: Dict of model_name -> model_instance to train
         train_split: Percentage (0-100) of data to use for training
         set_status_message: Callback function to update status messages
-        
+
     Returns:
         DataFrame with combined model results including predictions and probabilities
     """
@@ -66,7 +66,7 @@ def run_models(data, models, train_split, set_status_message) -> pd.DataFrame:
     # Train each selected model using proper SSAT model fitting
     fixture_index = X_test.apply(lambda x: f"{x.iloc[0]}-{x.iloc[1]}", axis=1)
     model_results = []
-    
+
     for model_name, model in models.items():
         try:
             set_status_message(f"<p><strong>🔄 Training {model_name}...</strong></p>")
@@ -102,26 +102,26 @@ def run_models(data, models, train_split, set_status_message) -> pd.DataFrame:
 
     if not model_results:
         return pd.DataFrame()
-        
+
     model_results = pd.concat(model_results, axis=0)
     return model_results
 
 
 def model_metrics(model_results):
     """Calculate comprehensive metrics for each model.
-    
+
     Args:
         model_results: DataFrame from run_models with predictions and actual outcomes
-        
+
     Returns:
         DataFrame with metrics for each model
     """
     if model_results.empty:
         return pd.DataFrame()
-        
+
     grouped = model_results.groupby("model")
     metrics = []
-    
+
     for model, group in grouped:
         print(f"Model: {model}")
         outcomes = (
@@ -166,12 +166,12 @@ def model_metrics(model_results):
 
 def generate_predictions(data, selected_models, model_results=None) -> pd.DataFrame:
     """Generate real predictions using trained SSAT models.
-    
+
     Args:
         data: Original data to extract teams from
         selected_models: List of model names to generate predictions for
         model_results: Optional dict with trained model instances
-        
+
     Returns:
         DataFrame with predictions for all team matchups
     """

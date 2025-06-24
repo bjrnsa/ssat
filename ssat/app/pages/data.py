@@ -1,13 +1,20 @@
 """Data Explorer Page for SSAT Model Comparison App.
 
 This module creates the data exploration page with interactive
-data analysis and visualization tools.
+data analysis and visualization tools using GraphicWalker.
 """
 
 import panel as pn
 
 from ssat.app.components.cards import create_info_card, create_placeholder_card
 from ssat.app.utils.ui_helpers import get_sizing_mode
+
+# Import GraphicWalker for interactive data exploration
+try:
+    from panel_gwalker import GraphicWalker
+    GRAPHIC_WALKER_AVAILABLE = True
+except ImportError:
+    GRAPHIC_WALKER_AVAILABLE = False
 
 
 def create_data_page(app) -> pn.Column:
@@ -77,14 +84,14 @@ def create_data_page(app) -> pn.Column:
 def _create_data_explorer_section(
     data_loaded: bool, filtered_data
 ) -> pn.viewable.Viewable:
-    """Create the interactive data explorer section.
+    """Create the interactive data explorer section using GraphicWalker.
 
     Args:
         data_loaded: Whether data has been loaded
         filtered_data: The filtered DataFrame
 
     Returns:
-        Data explorer component or placeholder
+        Interactive data explorer component or placeholder
     """
     if not data_loaded or filtered_data is None:
         return create_placeholder_card(
@@ -94,25 +101,53 @@ def _create_data_explorer_section(
         )
 
     try:
-        # Show basic data table for now to avoid document conflicts
-        table = pn.pane.DataFrame(
-            filtered_data.head(100),  # Show first 100 rows
-            pagination="remote",
-            page_size=20,
-            sizing_mode="stretch_width",
-            height=400,
-        )
-
-        return create_info_card("Data Explorer", table, icon="table_view")
+        if GRAPHIC_WALKER_AVAILABLE:
+            # Use GraphicWalker for interactive data exploration
+            # Disable kernel_computation to avoid document conflicts and complexity
+            explorer = GraphicWalker(
+                filtered_data,
+                renderer='explorer',  # Full exploration interface with drag-and-drop
+                kernel_computation=False,  # Client-side computation to avoid document conflicts
+                height=600,
+                sizing_mode="stretch_width"
+            )
+            
+            return create_info_card("Interactive Data Explorer", explorer, icon="explore")
+        
+        else:
+            # Fallback to basic DataFrame display without invalid parameters
+            table = pn.pane.DataFrame(
+                filtered_data.head(100),  # Show first 100 rows
+                max_rows=100,  # Use valid parameter instead of pagination
+                sizing_mode="stretch_width",
+                height=400,
+            )
+            
+            warning_content = """
+            <div style="background: #fff3e0; padding: 10px; border-radius: 4px; margin-bottom: 10px;">
+                <p style="margin: 0; color: #F57C00; font-size: 13px;">
+                    ⚠️ <strong>Limited Functionality:</strong> Install panel-graphic-walker for full interactive exploration features.
+                </p>
+            </div>
+            """
+            
+            return create_info_card(
+                "Data Explorer", 
+                pn.Column(pn.pane.HTML(warning_content), table), 
+                icon="table_view"
+            )
 
     except Exception as e:
-        # Fallback for errors
+        # Enhanced error handling with more specific error information
         error_content = f"""
         <div style="background: #ffebee; padding: 30px; border-radius: 8px; text-align: center; min-height: 400px; display: flex; flex-direction: column; justify-content: center;">
             <span class="material-icons" style="font-size: 64px; color: #d32f2f; margin-bottom: 20px;">error</span>
             <h3 style="margin: 0 0 10px 0; color: #d32f2f;">Data Explorer Error</h3>
             <p style="margin: 0 0 15px 0; color: #666; max-width: 500px; margin-left: auto; margin-right: auto; line-height: 1.6;">
                 Error loading data explorer: {str(e)}
+            </p>
+            <p style="margin: 0; color: #999; font-size: 12px;">
+                GraphicWalker Available: {GRAPHIC_WALKER_AVAILABLE}
             </p>
         </div>
         """

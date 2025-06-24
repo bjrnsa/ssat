@@ -30,8 +30,6 @@ SSAT is a comprehensive Python package for statistical sports analysis, providin
 
 ## ✅ To-Do
 
-- ### Streamlined fit and predic for both types of models
-
 - ### Write documentation to show features like adding weights
 
 ## 📦 Installation
