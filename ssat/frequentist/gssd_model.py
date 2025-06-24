@@ -143,6 +143,7 @@ class GSSD(BaseModel):
         X: Union[pd.DataFrame, np.ndarray],
         Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         point_spread: int = 0,
+        format_predictions: bool = False,
     ) -> pd.DataFrame:
         """Predict point spreads for matches.
 
@@ -179,7 +180,7 @@ class GSSD(BaseModel):
         away_def = team_ratings_array[away_idx, 3]  # paa for away teams
 
         # Calculate all predicted spreads vectorially
-        predicted_spreads = (
+        predictions = (
             self.intercept
             + home_off * self.pfh_coef
             + home_def * self.pah_coef
@@ -187,11 +188,13 @@ class GSSD(BaseModel):
             + away_def * self.paa_coef
         ) + point_spread
 
-        return self._format_predictions(
-            X,
-            predicted_spreads,
-            col_names=["goal_diff"],
-        )
+        if format_predictions:
+            return self._format_predictions(
+                X,
+                predictions,
+                col_names=["goal_diff"],
+            )
+        return predictions
 
     def predict_proba(
         self,
@@ -201,6 +204,7 @@ class GSSD(BaseModel):
         include_draw: bool = True,
         outcome: Optional[str] = None,
         threshold: float = 0.5,
+        format_predictions: bool = False,
     ) -> pd.DataFrame:
         """Predict match outcome probabilities.
 
@@ -238,7 +242,7 @@ class GSSD(BaseModel):
         if not include_draw and outcome == "draw":
             raise ValueError("Cannot predict draw when include_draw=False")
 
-        predictions = self.predict(X, Z, point_spread=0).to_numpy().reshape(-1, 1)
+        predictions = self.predict(X, Z, point_spread=0).reshape(-1, 1)
         thresholds = np.array([point_spread + threshold, -point_spread - threshold])
         thresholds = np.tile(thresholds, (len(predictions), 1))
 
@@ -274,7 +278,10 @@ class GSSD(BaseModel):
             result = np.stack([home_probs_norm, away_probs_norm]).T
             col_names = ["home", "away"]
 
-        return self._format_predictions(X, result, col_names=col_names)
+        if format_predictions:
+            return self._format_predictions(X, result, col_names=col_names)
+
+        return result
 
     def get_params(self) -> dict:
         """Get the current parameters of the model.

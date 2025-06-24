@@ -25,6 +25,7 @@ import arviz as az
 import cmdstanpy
 import matplotlib.pyplot as plt
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 
 from ssat.bayesian.base_model import BaseModel
@@ -90,24 +91,24 @@ class PredictiveModel(BaseModel):
 
     def _format_predictions(
         self,
-        data: Union[np.ndarray, pd.DataFrame],
-        predictions: np.ndarray,
-        col_names: list[str],
-    ) -> Union[np.ndarray, pd.DataFrame]:
+        data: Union[npt.NDArray[np.float64], pd.DataFrame],
+        predictions: npt.NDArray[np.float64],
+        col_names: List[str],
+    ) -> Union[npt.NDArray[np.float64], pd.DataFrame]:
         """Format predictions with appropriate index and column names.
 
         Parameters
         ----------
-        data : Union[np.ndarray, pd.DataFrame]
+        data : Union[npt.NDArray[np.float64], pd.DataFrame]
             Original input data used for prediction
-        predictions : np.ndarray
+        predictions : npt.NDArray[np.float64]
             Raw predictions from the model
-        col_names : list[str]
+        col_names : List[str]
             Names for the prediction columns
 
         Returns:
         -------
-        Union[np.ndarray, pd.DataFrame]
+        Union[npt.NDArray[np.float64], pd.DataFrame]
             Formatted predictions with meaningful index if input was DataFrame
         """
         if isinstance(data, pd.DataFrame):
@@ -118,18 +119,31 @@ class PredictiveModel(BaseModel):
                     fixture_index = data.apply(
                         lambda x: f"{x.iloc[0]}-{x.iloc[1]}", axis=1
                     )
-                    return pd.DataFrame(
-                        predictions, index=fixture_index, columns=col_names
-                    )
+                    if predictions.ndim == 1:
+                        return pd.Series(
+                            predictions, index=fixture_index, name=col_names[0]
+                        )
+                    else:
+                        return pd.DataFrame(
+                            predictions, index=fixture_index, columns=col_names
+                        )
                 except Exception:
-                    # Fallback to original match IDs if fixture creation fails
-                    return pd.DataFrame(
-                        predictions, index=self._match_ids, columns=col_names
-                    )
+                    # Fallback to original index if fixture creation fails
+                    if predictions.ndim == 1:
+                        return pd.Series(
+                            predictions, index=data.index, name=col_names[0]
+                        )
+                    else:
+                        return pd.DataFrame(
+                            predictions, index=data.index, columns=col_names
+                        )
             else:
-                return pd.DataFrame(
-                    predictions, index=self._match_ids, columns=col_names
-                )
+                if predictions.ndim == 1:
+                    return pd.Series(predictions, index=data.index, name=col_names[0])
+                else:
+                    return pd.DataFrame(
+                        predictions, index=data.index, columns=col_names
+                    )
         else:
             return predictions
 

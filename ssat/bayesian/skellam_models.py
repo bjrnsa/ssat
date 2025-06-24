@@ -102,6 +102,7 @@ class Skellam(Poisson):
         X: Union[pd.DataFrame, np.ndarray],
         Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         point_spread: int = 0,
+        format_predictions: bool = False,
     ) -> pd.DataFrame:
         """Generate predictions for new data.
 
@@ -165,11 +166,13 @@ class Skellam(Poisson):
         # Return median goal differences with point_spread adjustment
         result = np.median(predictions, axis=0) + point_spread
 
-        return self._format_predictions(
-            X,
-            result,
-            col_names=["goal_diff"],
-        )
+        if format_predictions:
+            return self._format_predictions(
+                X,
+                result,
+                col_names=["goal_diff"],
+            )
+        return result
 
     def predict_proba(
         self,
@@ -179,6 +182,7 @@ class Skellam(Poisson):
         include_draw: bool = True,
         outcome: Optional[str] = None,
         threshold: float = 0.5,
+        format_predictions: bool = False,
     ) -> pd.DataFrame:
         """Generate probability predictions for new data.
 
@@ -250,7 +254,10 @@ class Skellam(Poisson):
             result = np.stack([home_probs_norm, away_probs_norm]).T
             col_names = ["home", "away"]
 
-        return self._format_predictions(X, result, col_names=col_names)
+        if format_predictions:
+            return self._format_predictions(X, result, col_names=col_names)
+
+        return result
 
     def simulate_matches(self, *args, **kwargs):
         """Skellam models do not support detailed match simulation.

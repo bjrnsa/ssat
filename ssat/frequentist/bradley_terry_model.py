@@ -124,6 +124,7 @@ class BradleyTerry(BaseModel):
         X: Union[pd.DataFrame, np.ndarray],
         Z: Optional[Union[pd.DataFrame, np.ndarray]] = None,
         point_spread: int = 0,
+        format_predictions: bool = False,
     ) -> pd.DataFrame:
         """Generate predictions for new data.
 
@@ -154,11 +155,13 @@ class BradleyTerry(BaseModel):
         # Calculate all predicted spreads vectorially
         predictions = self.intercept + self.spread_coef * rating_diffs
 
-        return self._format_predictions(
-            X,
-            predictions,
-            col_names=["goal_diff"],
-        )
+        if format_predictions:
+            return self._format_predictions(
+                X,
+                predictions,
+                col_names=["goal_diff"],
+            )
+        return predictions
 
     def predict_proba(
         self,
@@ -168,6 +171,7 @@ class BradleyTerry(BaseModel):
         include_draw: bool = True,
         outcome: Optional[str] = None,
         threshold: float = 0.5,
+        format_predictions: bool = False,
     ) -> pd.DataFrame:
         """Generate probability predictions for new data.
 
@@ -200,7 +204,7 @@ class BradleyTerry(BaseModel):
         if not include_draw and outcome == "draw":
             raise ValueError("Cannot predict draw when include_draw=False")
 
-        predictions = self.predict(X, Z, point_spread=0).to_numpy().reshape(-1, 1)
+        predictions = self.predict(X, Z, point_spread=0).reshape(-1, 1)
         thresholds = np.array([point_spread + threshold, -point_spread - threshold])
         thresholds = np.tile(thresholds, (len(predictions), 1))
 
@@ -236,7 +240,10 @@ class BradleyTerry(BaseModel):
             result = np.stack([home_probs_norm, away_probs_norm]).T
             col_names = ["home", "away"]
 
-        return self._format_predictions(X, result, col_names=col_names)
+        if format_predictions:
+            return self._format_predictions(X, result, col_names=col_names)
+
+        return result
 
     def _log_likelihood(self, params: NDArray[np.float64]) -> np.float64:
         """Calculate negative log likelihood for parameter optimization."""
