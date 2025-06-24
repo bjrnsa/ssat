@@ -31,7 +31,7 @@ pn.extension(sizing_mode="stretch_width")
 # Verify Panel Material UI is available (without creating components)
 try:
     # Test that the module is importable without creating instances
-    hasattr(pmui, 'Button')
+    hasattr(pmui, "Button")
     print("✅ Panel Material UI components available")
 except Exception as e:
     print(f"⚠️ Panel Material UI not available: {e}")
@@ -261,7 +261,7 @@ class SSATModelComparisonApp(param.Parameterized):
 
         try:
             # Import training functions
-            from ssat.apps.ssat_model_comparison.data import run_models, model_metrics
+            from ssat.app.core.model_training import model_metrics, run_models
 
             # Create model instances
             models = {}
@@ -285,7 +285,7 @@ class SSATModelComparisonApp(param.Parameterized):
                 data=self.filtered_data,
                 models=models,
                 train_split=self.train_split,
-                set_status_message=set_status_message
+                set_status_message=set_status_message,
             )
 
             # Calculate metrics
@@ -295,7 +295,9 @@ class SSATModelComparisonApp(param.Parameterized):
             self.models_trained = True
             self.status_message = create_status_message(
                 "success",
-                get_status_message("training_complete", n_models=len(self.selected_models)),
+                get_status_message(
+                    "training_complete", n_models=len(self.selected_models)
+                ),
             )
 
         except Exception as e:
@@ -308,11 +310,11 @@ class SSATModelComparisonApp(param.Parameterized):
 
     def _get_model_instance(self, model_name: str, model_type: str):
         """Create a model instance from the model configuration.
-        
+
         Args:
             model_name: Name of the model to instantiate
             model_type: Type of model ("Frequentist" or "Bayesian")
-            
+
         Returns:
             Model instance or None if not found
         """
@@ -343,13 +345,13 @@ class SSATModelComparisonApp(param.Parameterized):
 
         try:
             # Import prediction function
-            from ssat.apps.ssat_model_comparison.data import generate_predictions
+            from ssat.app.core.model_training import generate_predictions
 
             # Generate real predictions using trained models
             self.prediction_results = generate_predictions(
                 data=self.filtered_data,
                 selected_models=self.selected_models,
-                model_results=None  # Use fallback prediction method for now
+                model_results=None,  # Use fallback prediction method for now
             )
 
             # Update status

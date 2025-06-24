@@ -19,12 +19,16 @@ dependencies = [
     "panel>=1.7.1",
     "panel-graphic-walker>=0.6.4",
     "panel-material-ui>=0.2.0",
+    "plotly>=5.0.0",
     "pyarrow>=20.0.0",
+    "scikit-learn>=1.7.0",
     "scipy>=1.15.1",
     "seaborn>=0.13.2",
     "watchfiles>=1.1.0",
 ]
 
+[project.scripts]
+app = "ssat.app:main"
 
 [project.urls]
 Repository = "https://github.com/bjrnsa/ssat"
