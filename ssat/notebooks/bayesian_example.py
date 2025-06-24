@@ -12,8 +12,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+from ssat.bayesian.poisson_models import Poisson
+from ssat.bayesian.skellam_models import Skellam
 from ssat.data import get_sample_handball_match_data
-from ssat.bayesian.predictive_models import Poisson, Skellam
 
 # %% [markdown]
 # ## Understanding the Models
@@ -98,8 +99,9 @@ filtered_matches = match_df.query("league == @league")
 filtered_matches = filtered_matches.assign(
     spread=filtered_matches.home_goals - filtered_matches.away_goals
 )
-poisson_features = ["home_team", "away_team", "home_goals", "away_goals"]
-skellam_features = ["home_team", "away_team", "goal_diff_match"]
+common_features = ["home_team", "away_team"]
+poisson_features = ["home_goals", "away_goals"]
+skellam_features = ["goal_diff_match"]
 
 
 # %% [markdown]
@@ -109,21 +111,25 @@ skellam_features = ["home_team", "away_team", "goal_diff_match"]
 
 # %% Fit Poisson Model
 poisson_model = Poisson()
-poisson_model.fit(filtered_matches[poisson_features], seed=2)
+poisson_model.fit(
+    filtered_matches[common_features], filtered_matches[poisson_features], seed=2
+)
 poisson_model.plot_trace()
 poisson_model.plot_team_stats()
 
-poisson_preds = poisson_model.predict(matches)
-poisson_probas = poisson_model.predict_proba(matches)
+poisson_preds = poisson_model.predict(matches, format_predictions=True)
+poisson_probas = poisson_model.predict_proba(matches, format_predictions=True)
 
 # %% Fit Skellam Model
 skellam = Skellam()
-skellam.fit(filtered_matches[skellam_features], seed=2)
+skellam.fit(
+    filtered_matches[common_features], filtered_matches[skellam_features], seed=2
+)
 skellam.plot_trace()
 skellam.plot_team_stats()
 
-skellam_preds = skellam.predict(matches)
-skellam_probas = skellam.predict_proba(matches)
+skellam_preds = skellam.predict(matches, format_predictions=True)
+skellam_probas = skellam.predict_proba(matches, format_predictions=True)
 
 # %% [markdown]
 # ## Displaying Predictions
@@ -132,7 +138,7 @@ skellam_probas = skellam.predict_proba(matches)
 
 # %%
 print("=== POISSON MODEL PREDICTIONS ===")
-print("\nPredictions (Goals):")
+print("\nPredictions (Goal Difference):")
 print(poisson_preds)
 print("\nWin Probabilities:")
 print(poisson_probas)
@@ -167,8 +173,8 @@ fig.suptitle(
 # Plot 1: Win Probabilities Comparison
 ax1 = axes[0, 0]
 matches_subset = matches.head(8)  # Show first 8 matches for clarity
-poisson_subset = poisson_probas.loc[matches_subset.index]
-skellam_subset = skellam_probas.loc[matches_subset.index]
+poisson_subset = poisson_probas.head(8)
+skellam_subset = skellam_probas.head(8)
 
 x_pos = range(len(matches_subset))
 width = 0.35

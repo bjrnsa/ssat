@@ -129,7 +129,7 @@ gssd_preds = gssd_model.predict(X_test)
 
 # Check for teams not in training
 test_teams = set(X_test.iloc[:, 0].tolist() + X_test.iloc[:, 1].tolist())
-train_teams = set(gssd_model.team_map_.keys())
+train_teams = set(gssd_model.team_map.keys())
 missing_teams = test_teams - train_teams
 
 if missing_teams:
